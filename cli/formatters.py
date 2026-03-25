@@ -66,6 +66,11 @@ def _f2(v) -> str:
     return f"{v:.4f}"
 
 
+def _to_sector_map(sectors: list) -> dict:
+    """Return {sector: weight} for sectors with weight > 0.001, preserving sort order."""
+    return {s["sector"]: s["weight"] for s in sectors if s.get("weight", 0) > 0.001}
+
+
 def _money(v) -> str:
     if v is None:
         return "N/A"
@@ -166,6 +171,13 @@ def print_screen_table(data: dict) -> None:
         th_rows = [[h["symbol"], _pct_plain(h["weight"]), h.get("name", "")] for h in th[:10]]
         print("  " + tabulate(th_rows, headers=["Symbol", "Weight", "Name"], tablefmt="simple"))
 
+    # Sector breakdown
+    sw = _to_sector_map(data.get("sectors", []))
+    if sw:
+        print(f"\n  Sector Breakdown — {ticker}")
+        sec_rows = [[sec, _pct_plain(w)] for sec, w in list(sw.items())[:8]]
+        print("  " + tabulate(sec_rows, headers=["Sector", "Weight"], tablefmt="simple"))
+
     freshness = data.get("data_freshness")
     if freshness:
         print(f"\n  Data as of: {freshness}")
@@ -233,6 +245,18 @@ def print_compare_table(data: dict) -> None:
             ]
             print("  " + tabulate(cc_rows, tablefmt="simple"))
 
+    # Sector breakdown — side-by-side for both tickers
+    wa = _to_sector_map(data.get(a, {}).get("sectors", []))
+    wb = _to_sector_map(data.get(b, {}).get("sectors", []))
+    if wa or wb:
+        sec_rows = [
+            [sec, _pct_plain(wa[sec]) if sec in wa else "-",
+                  _pct_plain(wb[sec]) if sec in wb else "-"]
+            for sec in sorted(wa.keys() | wb.keys())
+        ]
+        print(f"\n  Sector Breakdown")
+        print("  " + tabulate(sec_rows, headers=["Sector", a, b], tablefmt="simple"))
+
     freshness = data.get("data_freshness")
     if freshness:
         print(f"\n  Data as of: {freshness}")
@@ -296,6 +320,22 @@ def print_compare_multi_table(data: dict) -> None:
                 ["Correlation (full)",_f2(ctx.get("correlation_full"))],
             ]
             print("  " + tabulate(cc_rows, tablefmt="simple"))
+
+    # Sector breakdown matrix
+    sectors_map = data.get("sectors", {})
+    if sectors_map:
+        sec_weights = {t: _to_sector_map(secs) for t, secs in sectors_map.items()}
+        all_secs = sorted(set(sec for w in sec_weights.values() for sec in w))
+        if all_secs:
+            sec_rows = [
+                [sec] + [
+                    _pct_plain(sec_weights.get(t, {}).get(sec)) if sec in sec_weights.get(t, {}) else "-"
+                    for t in tickers
+                ]
+                for sec in all_secs
+            ]
+            print(f"\n  Sector Breakdown")
+            print("  " + tabulate(sec_rows, headers=["Sector"] + tickers, tablefmt="simple"))
 
     freshness = data.get("data_freshness")
     if freshness:

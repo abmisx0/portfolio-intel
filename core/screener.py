@@ -23,7 +23,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import PORTFOLIOS, RISK_FREE_RATE, LOOKBACK_5Y, BENCHMARK_TICKER
-from core.data_fetcher import get_close_series, price_map_freshness
+from core.data_fetcher import get_close_series, price_map_freshness, get_etf_sectors
 from core.analytics import (
     compute_metrics,
     trailing_return_windows,
@@ -124,6 +124,9 @@ def screen(
     # ── Top holdings of candidate ──────────────────────────────────────────────
     candidate_holdings = get_etf_holdings(candidate_ticker)
 
+    # ── Sector breakdown ───────────────────────────────────────────────────────
+    candidate_sectors = get_etf_sectors(candidate_ticker)
+
     return {
         "candidate_ticker": candidate_ticker,
         "portfolio": portfolio_name,
@@ -135,6 +138,7 @@ def screen(
         "overlap": overlap,
         "effective_concentration": concentration,
         "top_holdings": candidate_holdings[:10],
+        "sectors": candidate_sectors,
         "data_freshness": price_map_freshness(all_series),
     }
 
@@ -150,7 +154,7 @@ def compare_multi(tickers: List[str]) -> dict:
     benchmark = get_close_series(BENCHMARK_TICKER, start=_5Y_START)
 
     price_map: Dict[str, pd.Series] = {}
-    metrics_map, trailing_map, info_map, commodity_map = {}, {}, {}, {}
+    metrics_map, trailing_map, info_map, commodity_map, sectors_map = {}, {}, {}, {}, {}
 
     for t in tickers:
         s = get_close_series(t, start=_5Y_START)
@@ -160,6 +164,7 @@ def compare_multi(tickers: List[str]) -> dict:
             trailing_map[t] = trailing_return_windows(s)
             info_map[t] = _fetch_etf_info(t)
             commodity_map[t] = commodity_context(t, s)
+            sectors_map[t] = get_etf_sectors(t)
 
     corr = correlation_matrix(price_map) if len(price_map) >= 2 else {}
 
@@ -169,6 +174,7 @@ def compare_multi(tickers: List[str]) -> dict:
         "trailing_returns": trailing_map,
         "etf_info": info_map,
         "commodity_context": commodity_map,
+        "sectors": sectors_map,
         "correlation_matrix": corr,
         "data_freshness": price_map_freshness(list(price_map.values()) + [benchmark]),
     }
@@ -199,6 +205,8 @@ def compare(ticker_a: str, ticker_b: str) -> dict:
 
     holdings_a = get_etf_holdings(ticker_a)
     holdings_b = get_etf_holdings(ticker_b)
+    sectors_a = get_etf_sectors(ticker_a)
+    sectors_b = get_etf_sectors(ticker_b)
 
     # Cross-overlap: what's in A that's also in B
     map_a = {h["symbol"].upper(): h["weight"] for h in holdings_a}
@@ -217,6 +225,7 @@ def compare(ticker_a: str, ticker_b: str) -> dict:
             "trailing_returns": trailing_a,
             "risk_metrics": metrics_a,
             "top_holdings": holdings_a[:10],
+            "sectors": sectors_a,
             "commodity_context": commodity_context(ticker_a, series_a),
         },
         ticker_b: {
@@ -224,6 +233,7 @@ def compare(ticker_a: str, ticker_b: str) -> dict:
             "trailing_returns": trailing_b,
             "risk_metrics": metrics_b,
             "top_holdings": holdings_b[:10],
+            "sectors": sectors_b,
             "commodity_context": commodity_context(ticker_b, series_b),
         },
         "data_freshness": price_map_freshness([series_a, series_b, benchmark]),

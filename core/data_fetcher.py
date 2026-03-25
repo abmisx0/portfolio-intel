@@ -58,6 +58,13 @@ CREATE TABLE IF NOT EXISTS holdings (
     payload     TEXT    NOT NULL,
     PRIMARY KEY (ticker, fetch_date)
 );
+
+CREATE TABLE IF NOT EXISTS sectors (
+    ticker      TEXT    NOT NULL,
+    fetch_date  TEXT    NOT NULL,
+    payload     TEXT    NOT NULL,
+    PRIMARY KEY (ticker, fetch_date)
+);
 """
 
 
@@ -381,6 +388,84 @@ def _fetch_holdings_yfinance(ticker: str) -> List[dict]:
         ]
     except Exception as exc:
         logger.warning("Could not fetch holdings for %s: %s", ticker, exc)
+        return []
+
+
+# ── Sector Fetching ────────────────────────────────────────────────────────────
+
+_SECTOR_NAMES: dict[str, str] = {
+    "realestate":             "Real Estate",
+    "consumer_cyclical":      "Consumer Cyclical",
+    "basic_materials":        "Basic Materials",
+    "consumer_defensive":     "Consumer Defensive",
+    "technology":             "Technology",
+    "communication_services": "Communication Services",
+    "financial_services":     "Financial Services",
+    "utilities":              "Utilities",
+    "industrials":            "Industrials",
+    "energy":                 "Energy",
+    "healthcare":             "Healthcare",
+}
+
+
+def get_etf_sectors(ticker: str) -> List[dict]:
+    """
+    Return ETF sector weights as [{sector, weight}], sorted by weight descending.
+
+    Cached for HOLDINGS_CACHE_TTL_DAYS. Falls back to empty list on failure.
+    Weight values are fractions (e.g. 0.95 = 95%).
+    """
+    ticker = ticker.upper()
+    today = date.today()
+    cutoff = (today - timedelta(days=HOLDINGS_CACHE_TTL_DAYS)).isoformat()
+
+    with _db() as conn:
+        row = conn.execute(
+            """SELECT payload FROM sectors
+               WHERE ticker = ? AND fetch_date >= ?
+               ORDER BY fetch_date DESC LIMIT 1""",
+            (ticker, cutoff),
+        ).fetchone()
+
+        if row:
+            logger.debug("Sectors cache hit for %s", ticker)
+            return json.loads(row["payload"])
+
+        logger.info("Fetching sectors for %s", ticker)
+        sectors = _fetch_sectors_yfinance(ticker)
+
+        conn.execute(
+            "INSERT OR REPLACE INTO sectors (ticker, fetch_date, payload) VALUES (?, ?, ?)",
+            (ticker, today.isoformat(), json.dumps(sectors)),
+        )
+        conn.commit()
+
+    return sectors
+
+
+def _fetch_sectors_yfinance(ticker: str) -> List[dict]:
+    """
+    Fetch ETF sector breakdown from yfinance funds_data.
+    Returns [{sector, weight}] sorted by weight desc, weights as fractions.
+    """
+    try:
+        t = yf.Ticker(ticker)
+        fd = getattr(t, "funds_data", None)
+        if fd is None:
+            return []
+        sw = getattr(fd, "sector_weightings", None)
+        if not sw:
+            return []
+        result = []
+        for key, weight in sw.items():
+            if weight and float(weight) > 0:
+                name = _SECTOR_NAMES.get(key, key.replace("_", " ").title())
+                result.append({"sector": name, "weight": float(weight)})
+        result.sort(key=lambda x: x["weight"], reverse=True)
+        logger.debug("Sectors for %s: %d non-zero sectors", ticker, len(result))
+        return result
+    except Exception as exc:
+        logger.warning("Could not fetch sectors for %s: %s", ticker, exc)
         return []
 
 

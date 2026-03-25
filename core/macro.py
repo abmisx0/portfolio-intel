@@ -20,6 +20,7 @@ curve  = get_yield_curve()         # {"2Y": 4.12, "10Y": 4.39, "spread": 0.27}
 from __future__ import annotations
 
 import functools
+import io
 import logging
 import os
 import sys
@@ -54,6 +55,9 @@ MACRO_SYMBOLS: dict[str, str] = {
 # Yahoo Finance yield symbols report values already in percent (e.g. 4.5 means 4.5%).
 # Divide by 100 to convert to decimal for Sharpe / risk-free rate calculations.
 _YIELD_KEYS = {"IRX", "TNX", "TYX"}
+
+# Full set of Treasury yield curve tenors, in term order
+_TENORS = ["1M", "2M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
 
 # FRED series IDs for data not available via yfinance
 _FRED_SERIES: dict[str, str] = {
@@ -215,34 +219,58 @@ def get_yield_curve() -> dict:
     """
     Return a current yield-curve snapshot.
 
-    Pulls 3M (^IRX via yfinance) and 10Y (^TNX via yfinance) from cache,
-    and 2Y + 10Y–2Y spread from FRED (if key available).
+    Priority:
+      1. US Treasury direct API (treasury.gov) — free, no key, full term structure
+      2. yfinance (^IRX/^TNX/^TYX) — 3M, 10Y, 30Y fallback
+      3. FRED API (DGS2/T10Y2Y) — 2Y fallback if Treasury unavailable
 
     Returns
     -------
     {
-        "3M":     float | None,   # annualised %, e.g. 4.32
-        "2Y":     float | None,
-        "10Y":    float | None,
-        "30Y":    float | None,
-        "spread_10y_2y": float | None,   # positive = normal curve
-        "as_of":  str,
+        "1M", "2M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y":
+            float | None   # annualised %, e.g. 4.39
+        "spread_10y_2y": float | None   # positive = normal curve
+        "as_of": str
     }
     """
-    result: dict = {"3M": None, "2Y": None, "10Y": None, "30Y": None,
-                    "spread_10y_2y": None, "as_of": date.today().isoformat()}
+    result: dict = {t: None for t in _TENORS}
+    result["spread_10y_2y"] = None
+    result["as_of"] = date.today().isoformat()
 
-    # yfinance yields (in % from ^IRX / ^TNX / ^TYX — already converted to decimal by get_macro)
+    # ── Primary: US Treasury direct API ────────────────────────────────────────
+    try:
+        today = date.today()
+        df = fetch_treasury_yield_curve(today.year)
+        # Early in the year the current-year CSV may be sparse; blend in prior year
+        if df.empty or df.index[-1].date() < today - timedelta(days=7):
+            prev = fetch_treasury_yield_curve(today.year - 1)
+            if not prev.empty:
+                df = pd.concat([prev, df]).sort_index() if not df.empty else prev
+
+        if not df.empty:
+            latest = df.iloc[-1]
+            for tenor in _TENORS:
+                if tenor in latest.index and pd.notna(latest[tenor]):
+                    result[tenor] = round(float(latest[tenor]), 3)
+            result["as_of"] = df.index[-1].strftime("%Y-%m-%d")
+            if result["10Y"] is not None and result["2Y"] is not None:
+                result["spread_10y_2y"] = round(result["10Y"] - result["2Y"], 3)
+            logger.debug("yield_curve: Treasury.gov as of %s", result["as_of"])
+            return result
+    except Exception as exc:
+        logger.warning("yield_curve: Treasury fetch failed (%s); falling back", exc)
+
+    # ── Fallback: yfinance (3M, 10Y, 30Y) ─────────────────────────────────────
     for key, out_key in [("IRX", "3M"), ("TNX", "10Y"), ("TYX", "30Y")]:
         try:
             s = get_macro(key)
             if not s.empty:
-                result[out_key] = round(float(s.iloc[-1]) * 100, 3)   # back to %
+                result[out_key] = round(float(s.iloc[-1]) * 100, 3)
                 result["as_of"] = s.index[-1].strftime("%Y-%m-%d")
         except Exception as exc:
             logger.warning("yield_curve: failed to fetch %s: %s", key, exc)
 
-    # FRED for 2Y (not available cleanly on yfinance)
+    # ── Fallback: FRED for 2Y ──────────────────────────────────────────────────
     try:
         dgs2 = fetch_fred("DGS2", start=date.today() - timedelta(days=10))
         if not dgs2.empty:
@@ -258,6 +286,70 @@ def get_yield_curve() -> dict:
             result["spread_10y_2y"] = round(result["10Y"] - result["3M"], 3)
 
     return result
+
+
+# ── US Treasury Yield Curve ────────────────────────────────────────────────────
+# Completely free, no API key. Treasury publishes full daily yield curve CSV.
+
+_TREASURY_COL_MAP: dict[str, str] = {
+    "1 Mo":      "1M",
+    "2 Mo":      "2M",
+    "3 Mo":      "3M",
+    "6 Mo":      "6M",
+    "1 Yr":      "1Y",
+    "2 Yr":      "2Y",
+    "3 Yr":      "3Y",
+    "5 Yr":      "5Y",
+    "7 Yr":      "7Y",
+    "10 Yr":     "10Y",
+    "20 Yr":     "20Y",
+    "30 Yr":     "30Y",
+}
+
+# In-process cache: {year: (fetch_date, DataFrame)}  — re-fetches once per day
+_treasury_cache: dict[int, tuple[date, "pd.DataFrame"]] = {}
+
+
+def fetch_treasury_yield_curve(year: Optional[int] = None) -> "pd.DataFrame":
+    """
+    Fetch daily Treasury yield curve data from TreasuryDirect.gov.
+
+    Free, no API key required. Columns: 1M, 2M, 3M, 6M, 1Y, 2Y, 3Y, 5Y, 7Y,
+    10Y, 20Y, 30Y. Values are in percent (e.g. 4.39 = 4.39%). Index is date.
+
+    Results are cached in-process for the day to avoid redundant HTTP calls.
+    """
+    import requests as _req
+
+    today = date.today()
+    if year is None:
+        year = today.year
+
+    if year in _treasury_cache:
+        fetch_date, df = _treasury_cache[year]
+        if fetch_date == today:
+            return df
+
+    url = (
+        f"https://home.treasury.gov/resource-center/data-chart-center/"
+        f"interest-rates/daily-treasury-rates.csv/{year}/all"
+        f"?type=daily_treasury_yield_curve&field_tdr_date_value={year}&page&_format=csv"
+    )
+    try:
+        resp = _req.get(url, timeout=15, headers={"User-Agent": "portfolio-intel/1.0"})
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text), index_col=0, parse_dates=True)
+        df.index = pd.DatetimeIndex(df.index)
+        df = df.sort_index()
+        rename = {c: _TREASURY_COL_MAP[c] for c in df.columns if c in _TREASURY_COL_MAP}
+        df = df.rename(columns=rename)
+        df = df[[c for c in _TREASURY_COL_MAP.values() if c in df.columns]]
+        _treasury_cache[year] = (today, df)
+        logger.info("Treasury yield curve: %d rows for %d", len(df), year)
+        return df
+    except Exception as exc:
+        logger.warning("Treasury yield curve fetch failed for %d: %s", year, exc)
+        return pd.DataFrame()
 
 
 # ── Commodity context for compare() ───────────────────────────────────────────
