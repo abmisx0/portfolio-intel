@@ -1,0 +1,169 @@
+{% set ticker = data.candidate_ticker %}
+{% set info = data.etf_info %}
+{% set trailing = data.trailing_returns %}
+{% set metrics = data.risk_metrics %}
+{% set overlap = data.overlap %}
+{% set conc = data.effective_concentration %}
+{% set corrs = data.correlations_to_portfolio %}
+
+<!-- ETF header -->
+<div class="card" style="margin-top:0">
+  <div style="display:flex;align-items:baseline;gap:0.75rem;margin-bottom:0.75rem">
+    <span class="num" style="font-size:1.3rem;font-weight:700">{{ ticker }}</span>
+    <span style="color:var(--muted);font-size:0.9rem">{{ info.get('name', '') }}</span>
+    {% if data.data_freshness %}<span class="badge">{{ data.data_freshness }}</span>{% endif %}
+  </div>
+  <div style="display:flex;gap:1.5rem;flex-wrap:wrap">
+    <span class="muted" style="font-size:0.82rem">Family: {{ info.get('fund_family') or '—' }}</span>
+    <span class="muted" style="font-size:0.82rem">AUM: <span class="num">{{ info.get('aum') | money }}</span></span>
+    <span class="muted" style="font-size:0.82rem">Expense: <span class="num">{{ info.get('expense_ratio') | pct_plain }}</span></span>
+    <span class="muted" style="font-size:0.82rem">Div Yield: <span class="num">{{ info.get('dividend_yield') | pct_plain }}</span></span>
+  </div>
+</div>
+
+<div class="grid-2">
+
+  <!-- Trailing returns + risk metrics -->
+  <div class="card">
+    <div class="card-title">Returns & Risk</div>
+
+    <div class="section-label">Trailing Returns</div>
+    <table class="data-table">
+      <thead><tr>
+        {% for w in ['1M','3M','6M','YTD','1Y','3Y','5Y'] %}
+        <th class="c">{{ w }}</th>
+        {% endfor %}
+      </tr></thead>
+      <tbody><tr>
+        {% for w in ['1M','3M','6M','YTD','1Y','3Y','5Y'] %}
+        <td class="c"><span class="{{ trailing.get(w) | pct_class }}">{{ trailing.get(w) | pct }}</span></td>
+        {% endfor %}
+      </tr></tbody>
+    </table>
+
+    <div class="section-label">Risk Metrics (5Y)</div>
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="stat-label">Ann. Return</div>
+        <div class="stat-value {{ metrics.get('annualized_return') | pct_class }}">{{ metrics.get('annualized_return') | pct }}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Volatility</div>
+        <div class="stat-value num">{{ metrics.get('annualized_volatility') | pct }}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Sharpe</div>
+        <div class="stat-value {{ metrics.get('sharpe_ratio') | sign_class }}">{{ metrics.get('sharpe_ratio') | f2 }}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Sortino</div>
+        <div class="stat-value {{ metrics.get('sortino_ratio') | sign_class }}">{{ metrics.get('sortino_ratio') | f2 }}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Max Drawdown</div>
+        <div class="stat-value neg">{{ metrics.get('max_drawdown') | pct }}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Beta vs VOO</div>
+        <div class="stat-value num">{{ metrics.get('beta') | f2 }}</div>
+      </div>
+    </div>
+
+    <div class="section-label">Correlation to Portfolio</div>
+    <table class="data-table">
+      <thead><tr><th>Position</th><th class="r">Correlation</th></tr></thead>
+      <tbody>
+        {% for t, v in corrs.items() %}
+        <tr>
+          <td class="num">{{ t }}</td>
+          <td class="r">
+            {% if v is not none %}
+              {% if v | float > 0.7 %}
+                <span class="num corr-high">{{ v | f2 }}</span>
+              {% elif v | float < 0.3 %}
+                <span class="num corr-low">{{ v | f2 }}</span>
+              {% else %}
+                <span class="num corr-med">{{ v | f2 }}</span>
+              {% endif %}
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Overlap + concentration -->
+  <div class="card">
+    <div class="card-title">Overlap Analysis</div>
+
+    {% set oc = overlap.overlap_coefficient %}
+    <div style="margin-bottom:1rem">
+      <div style="display:flex;justify-content:space-between;margin-bottom:0.3rem">
+        <span style="font-size:0.82rem">Overlap Coefficient</span>
+        <span class="num" style="font-weight:700;color:{% if oc > 0.3 %}var(--red){% elif oc > 0.1 %}var(--gold){% else %}var(--green){% endif %}">{{ oc | pct_plain }}</span>
+      </div>
+      <div class="overlap-bar-wrap"><div class="overlap-bar" style="width:{{ [oc * 100, 100] | min }}%"></div></div>
+    </div>
+
+    {% if overlap.shared_holdings %}
+    <div class="section-label">Shared Holdings</div>
+    <table class="data-table">
+      <thead><tr><th>Symbol</th><th class="r">Cand. Wt</th><th class="r">Port. Wt</th><th class="r">Overlap</th></tr></thead>
+      <tbody>
+        {% for h in overlap.shared_holdings[:8] %}
+        <tr>
+          <td class="num">{{ h.symbol }}</td>
+          <td class="r num">{{ h.candidate_weight | pct_plain }}</td>
+          <td class="r num">{{ h.portfolio_weight | pct_plain }}</td>
+          <td class="r num" style="color:var(--gold)">{{ h.overlap_contribution | pct_plain }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted" style="font-size:0.85rem">No shared holdings found.</p>
+    {% endif %}
+
+    <div class="section-label">Effective Concentration if added at {{ (allocation * 100) | round(0) | int }}%</div>
+    <p style="font-size:0.82rem;margin-bottom:0.75rem">
+      Max single-stock: <span class="num" style="font-weight:700">{{ conc.max_single_stock_symbol }}</span>
+      <span class="num" style="color:{% if conc.max_single_stock > 0.05 %}var(--red){% else %}var(--muted){% endif %}">
+        @ {{ conc.max_single_stock | pct_plain }}
+      </span>
+    </p>
+    <table class="data-table">
+      <thead><tr><th>#</th><th>Symbol</th><th class="r">Eff. Wt</th></tr></thead>
+      <tbody>
+        {% for h in conc.top_holdings[:8] %}
+        <tr>
+          <td class="muted" style="font-size:0.78rem">{{ loop.index }}</td>
+          <td class="num">{{ h.symbol }}</td>
+          <td class="r"><span class="num {% if h.effective_weight > 0.05 %}neg{% endif %}">{{ h.effective_weight | pct_plain }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div><!-- grid-2 -->
+
+<!-- Top holdings of candidate -->
+{% if data.top_holdings %}
+<div class="card">
+  <div class="card-title">Top Holdings — {{ ticker }}</div>
+  <table class="data-table">
+    <thead><tr><th>#</th><th>Symbol</th><th class="r">Weight</th><th>Name</th></tr></thead>
+    <tbody>
+      {% for h in data.top_holdings %}
+      <tr>
+        <td class="muted" style="font-size:0.78rem">{{ loop.index }}</td>
+        <td class="num" style="font-weight:600">{{ h.symbol }}</td>
+        <td class="r num">{{ h.weight | pct_plain }}</td>
+        <td style="color:var(--muted);font-size:0.82rem">{{ h.name }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}

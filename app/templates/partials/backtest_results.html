@@ -1,0 +1,101 @@
+{% set a = data.portfolio_a %}
+{% set b = data.portfolio_b %}
+{% set has_bm = 'benchmark_VOO' in data %}
+
+<!-- Chart -->
+<div class="card">
+  <div class="card-title">Cumulative Return — Growth of $100 ({{ data.actual_start }} → {{ data.actual_end }})</div>
+  <div class="chart-wrap"><div id="bt-chart"></div></div>
+</div>
+
+<!-- Metrics comparison -->
+<div class="card">
+  <div class="card-title">Performance Summary</div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Metric</th>
+        <th class="r">{{ a }}</th>
+        <th class="r">{{ b }}</th>
+        {% if has_bm %}<th class="r">VOO</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% set metric_rows = [
+        ('Total Return',   'total_return',           'pct'),
+        ('Ann. Return',    'annualized_return',       'pct'),
+        ('Volatility',     'annualized_volatility',   'pct'),
+        ('Sharpe Ratio',   'sharpe_ratio',            'f2'),
+        ('Sortino Ratio',  'sortino_ratio',           'f2'),
+        ('Max Drawdown',   'max_drawdown',            'pct'),
+        ('Calmar Ratio',   'calmar_ratio',            'f2'),
+      ] %}
+      {% for label, key, fmt in metric_rows %}
+      {% set va = data[a].metrics.get(key) %}
+      {% set vb = data[b].metrics.get(key) %}
+      {% set vbm = data.benchmark_VOO.metrics.get(key) if has_bm else none %}
+      <tr>
+        <td>{{ label }}</td>
+        <td class="r"><span class="{% if fmt == 'pct' %}{{ va | pct_class }}{% else %}{{ va | sign_class }}{% endif %}">{% if fmt == 'pct' %}{{ va | pct }}{% else %}{{ va | f2 }}{% endif %}</span></td>
+        <td class="r"><span class="{% if fmt == 'pct' %}{{ vb | pct_class }}{% else %}{{ vb | sign_class }}{% endif %}">{% if fmt == 'pct' %}{{ vb | pct }}{% else %}{{ vb | f2 }}{% endif %}</span></td>
+        {% if has_bm %}
+        <td class="r"><span class="{% if fmt == 'pct' %}{{ vbm | pct_class }}{% else %}{{ vbm | sign_class }}{% endif %}">{% if fmt == 'pct' %}{{ vbm | pct }}{% else %}{{ vbm | f2 }}{% endif %}</span></td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <!-- Summary winners -->
+  {% set s = data.summary %}
+  {% if s %}
+  <div style="display:flex;gap:2rem;flex-wrap:wrap;margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border);font-size:0.82rem">
+    <span class="muted">Best return: <span class="num" style="color:var(--blue)">{{ s.winner_return }}</span></span>
+    <span class="muted">Best Sharpe: <span class="num" style="color:var(--blue)">{{ s.winner_sharpe }}</span></span>
+    <span class="muted">Less drawdown: <span class="num" style="color:var(--blue)">{{ s.winner_drawdown }}</span></span>
+    {% if has_bm %}
+    <span class="muted">{{ a }} vs VOO: <span class="{{ s.a_vs_benchmark | pct_class }}">{{ s.a_vs_benchmark | pct }}/yr</span></span>
+    <span class="muted">{{ b }} vs VOO: <span class="{{ s.b_vs_benchmark | pct_class }}">{{ s.b_vs_benchmark | pct }}/yr</span></span>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<!-- Calendar year returns -->
+{% set years_a = data[a].calendar_year_returns %}
+{% set years_b = data[b].calendar_year_returns %}
+{% set all_years = (years_a.keys() | list + years_b.keys() | list) | unique | sort %}
+
+<div class="card">
+  <div class="card-title">Calendar Year Returns</div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Year</th>
+        <th class="r">{{ a }}</th>
+        <th class="r">{{ b }}</th>
+        {% if has_bm %}<th class="r">VOO</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for yr in all_years %}
+      {% set va = years_a.get(yr) %}
+      {% set vb = years_b.get(yr) %}
+      {% set vbm = data.benchmark_VOO.calendar_year_returns.get(yr) if has_bm else none %}
+      <tr>
+        <td class="num">{{ yr }}</td>
+        <td class="r"><span class="{{ va | pct_class }}">{{ va | pct }}</span></td>
+        <td class="r"><span class="{{ vb | pct_class }}">{{ vb | pct }}</span></td>
+        {% if has_bm %}<td class="r"><span class="{{ vbm | pct_class }}">{{ vbm | pct }}</span></td>{% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+(function() {
+  const chartData = {{ chart_json | safe }};
+  Plotly.react('bt-chart', chartData.data, chartData.layout, {responsive: true, displayModeBar: false});
+})();
+</script>

@@ -1,0 +1,57 @@
+"""
+Portfolio Intelligence CLI entry point.
+
+Usage:
+  python -m cli screen XLE --portfolio proposed --format json
+  python -m cli compare LIT COPX --format table
+  python -m cli holdings --portfolio proposed --top 20 --format table
+"""
+from __future__ import annotations
+
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import click
+
+from cli.commands.screen import screen_cmd
+from cli.commands.compare import compare_cmd
+from cli.commands.holdings import holdings_cmd
+from cli.commands.backtest import backtest_cmd
+from cli.commands.analytics import analytics_cmd
+from cli.commands.correlation import correlation_cmd
+from cli.commands.watchlist import watchlist_cmd
+from cli.commands.rebalance import rebalance_cmd
+from cli.commands.alerts import alerts_cmd
+from cli.commands.optimize import optimize_cmd
+
+
+@click.group()
+def cli():
+    """Portfolio Intelligence — ETF research and analytics tool."""
+    pass
+
+
+cli.add_command(screen_cmd, name="screen")
+cli.add_command(compare_cmd, name="compare")
+cli.add_command(holdings_cmd, name="holdings")
+cli.add_command(backtest_cmd, name="backtest")
+cli.add_command(analytics_cmd, name="analytics")
+cli.add_command(correlation_cmd, name="correlation")
+cli.add_command(watchlist_cmd, name="watchlist")
+cli.add_command(rebalance_cmd, name="rebalance")
+cli.add_command(alerts_cmd, name="alerts")
+cli.add_command(optimize_cmd, name="optimize")
+
+
+@cli.command()
+@click.option("--host", default="0.0.0.0", show_default=True)
+@click.option("--port", default=8000, show_default=True, type=int)
+def start(host: str, port: int):
+    """Start the web dashboard."""
+    import uvicorn
+    uvicorn.run("app.main:app", host=host, port=port, reload=False)
+
+
+if __name__ == "__main__":
+    cli()

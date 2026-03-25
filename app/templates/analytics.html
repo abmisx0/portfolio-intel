@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Analytics — Portfolio Intelligence{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Analytics</h1>
+  <span class="badge">{{ portfolio }}</span>
+</div>
+
+<!-- HTMX loads data after page frame is visible -->
+<div id="analytics-content"
+     hx-get="/analytics/data?portfolio={{ portfolio }}"
+     hx-trigger="load"
+     hx-swap="innerHTML"
+     hx-indicator="#analytics-loading">
+</div>
+
+<div id="analytics-loading" class="htmx-indicator" style="display:flex">
+  <div class="spinner">Loading analytics…</div>
+</div>
+
+{% endblock %}

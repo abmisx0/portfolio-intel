@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Watchlist — Portfolio Intelligence{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Watchlist</h1>
+  <span class="badge">{{ items | length }} tickers</span>
+</div>
+
+<div class="grid-2">
+
+  <!-- Add form -->
+  <div class="card">
+    <div class="card-title">Add Candidate ETF</div>
+    <form hx-post="/watchlist/add"
+          hx-target="#wl-rows"
+          hx-swap="innerHTML"
+          hx-on::after-request="this.reset()">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Ticker</label>
+          <input class="form-control" name="ticker" placeholder="e.g. COPX"
+                 style="text-transform:uppercase;width:100px" required>
+        </div>
+        <div class="form-group" style="flex:1">
+          <label>Notes (optional)</label>
+          <input class="form-control" name="notes" placeholder="Why you're watching this">
+        </div>
+        <button class="btn" type="submit">Add</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Screener trigger -->
+  <div class="card">
+    <div class="card-title">Quick Screen</div>
+    <p class="muted" style="font-size:0.85rem;margin-bottom:0.75rem">
+      Click <strong>Screen</strong> next to any ticker to run a full overlap analysis.
+      Results appear below the watchlist table.
+    </p>
+    <p class="muted" style="font-size:0.82rem">
+      Use the CLI to screen all at once:<br>
+      <code style="font-family:var(--mono);color:var(--blue)">python -m cli watchlist screen --portfolio proposed</code>
+    </p>
+  </div>
+
+</div>
+
+<!-- Watchlist table -->
+<div class="card">
+  <div class="card-title">Saved Candidates</div>
+  <table class="data-table">
+    <thead>
+      <tr><th>Ticker</th><th>Added</th><th>Notes</th><th></th></tr>
+    </thead>
+    <tbody id="wl-rows">
+      {% include "partials/watchlist_rows.html" %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Screen results (populated by HTMX) -->
+<div id="wl-screen-results"></div>
+
+{% endblock %}

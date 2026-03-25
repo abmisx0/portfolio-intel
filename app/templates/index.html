@@ -1,0 +1,519 @@
+{% extends "base.html" %}
+{% block title %}Overview — Portfolio Intelligence{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+  <h1>Overview</h1>
+  <form method="get" action="/">
+    <select name="portfolio" class="form-control portfolio-select" onchange="this.form.submit()">
+      {% for p in portfolios %}
+      <option value="{{ p }}" {% if p == portfolio %}selected{% endif %}>{{ p }}</option>
+      {% endfor %}
+    </select>
+  </form>
+  {% if data_freshness %}
+  <span class="badge" id="freshness-badge">as of {{ data_freshness }}</span>
+  {% if days_since_sync is not none %}
+  <span class="badge{% if days_since_sync > 3 %} badge-stale{% endif %}" id="sync-badge">{{ days_since_sync }}d since sync</span>
+  {% endif %}
+  <button class="btn-sync" id="sync-btn">Sync</button>
+  {% endif %}
+</div>
+<div class="sync-note" id="sync-note" style="display:none"></div>
+
+{% if port_metrics %}
+<div class="card">
+  <div class="stat-grid stat-grid-wide">
+    <div class="stat">
+      <div class="stat-label">Ann. Return</div>
+      <div class="stat-value {{ port_metrics.get('annualized_return') | pct_class }}">{{ port_metrics.get('annualized_return') | pct }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Volatility</div>
+      <div class="stat-value num">{{ port_metrics.get('annualized_volatility') | pct }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Sharpe</div>
+      <div class="stat-value {{ port_metrics.get('sharpe_ratio') | sign_class }}">{{ port_metrics.get('sharpe_ratio') | f2 }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Sortino</div>
+      <div class="stat-value {{ port_metrics.get('sortino_ratio') | sign_class }}">{{ port_metrics.get('sortino_ratio') | f2 }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Max Drawdown</div>
+      <div class="stat-value neg">{{ port_metrics.get('max_drawdown') | pct }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Calmar</div>
+      <div class="stat-value {{ port_metrics.get('calmar_ratio') | sign_class }}">{{ port_metrics.get('calmar_ratio') | f2 }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Beta vs VOO</div>
+      <div class="stat-value num">{{ port_metrics.get('beta') | f2 }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Corr vs VOO</div>
+      <div class="stat-value num">{{ port_metrics.get('correlation_to_benchmark') | f2 }}</div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-title">Portfolio Performance vs SPX (normalized %)</div>
+  <div class="cum-header">
+    <div class="perf-periods" id="cum-period-btns">
+      <button class="perf-btn active" data-period="ALL">ALL</button>
+      <button class="perf-btn" data-period="10Y">10Y</button>
+      <button class="perf-btn" data-period="5Y">5Y</button>
+      <button class="perf-btn" data-period="3Y">3Y</button>
+      <button class="perf-btn" data-period="1Y">1Y</button>
+      <button class="perf-btn" data-period="YTD">YTD</button>
+      <button class="perf-btn" data-period="6M">6M</button>
+      <button class="perf-btn" data-period="3M">3M</button>
+      <button class="perf-btn" data-period="1M">1M</button>
+    </div>
+    <div class="perf-tools">
+      <select id="cum-comp" class="form-control perf-res-select">
+        <option value="">vs SPX only</option>
+        {% for p in portfolios %}{% if p != portfolio %}
+        <option value="{{ p }}">{{ p }}</option>
+        {% endif %}{% endfor %}
+      </select>
+      <select id="cum-res" class="form-control perf-res-select">
+        <option value="Daily">Daily</option>
+        <option value="Weekly">Weekly</option>
+        <option value="Monthly">Monthly</option>
+        <option value="Quarterly">Quarterly</option>
+        <option value="Yearly">Yearly</option>
+      </select>
+    </div>
+  </div>
+  <div id="cum-compositions" class="cum-compositions" style="display:none"></div>
+  <div id="cum-empty" style="display:none;text-align:center;padding:3rem 1rem;color:var(--muted);font-size:0.85rem;">Not enough data for this period / resolution combination</div>
+  <div class="chart-wrap">
+    <div id="cum-chart"></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Position Performance (normalized %)</div>
+  <div class="perf-header">
+    <div class="perf-periods" id="perf-period-btns">
+      <button class="perf-btn active" data-period="ALL">ALL</button>
+      <button class="perf-btn" data-period="10Y">10Y</button>
+      <button class="perf-btn" data-period="5Y">5Y</button>
+      <button class="perf-btn" data-period="3Y">3Y</button>
+      <button class="perf-btn" data-period="1Y">1Y</button>
+      <button class="perf-btn" data-period="YTD">YTD</button>
+      <button class="perf-btn" data-period="6M">6M</button>
+      <button class="perf-btn" data-period="3M">3M</button>
+      <button class="perf-btn" data-period="1M">1M</button>
+    </div>
+    <div class="perf-tools">
+      <select id="perf-res" class="form-control perf-res-select">
+        <option value="Daily">Daily</option>
+        <option value="Weekly">Weekly</option>
+        <option value="Monthly">Monthly</option>
+        <option value="Quarterly">Quarterly</option>
+        <option value="Yearly">Yearly</option>
+      </select>
+    </div>
+  </div>
+  <div id="perf-empty" style="display:none;text-align:center;padding:3rem 1rem;color:var(--muted);font-size:0.85rem;">Not enough data for this period / resolution combination</div>
+  <div class="chart-wrap">
+    <div id="perf-chart"></div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-title">Drawdown from Peak</div>
+    <div class="chart-wrap">
+      <div id="dd-chart"></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Trailing Returns by Position</div>
+    <div class="chart-wrap">
+      <div id="tr-chart"></div>
+    </div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-title">Allocation Map</div>
+    <div class="chart-wrap">
+      <div id="treemap"></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Risk vs Return (1Y, bubble = weight)</div>
+    <div class="chart-wrap">
+      <div id="rr-chart"></div>
+    </div>
+  </div>
+</div>
+
+<div class="grid-2">
+
+  <div class="card">
+    <div class="card-title">Positions</div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Ticker</th>
+            <th class="hide-mobile">Theme</th>
+            <th class="r">Weight</th>
+            <th class="r">1Y</th>
+            <th class="r">Vol</th>
+            <th class="r">Sharpe</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if positions %}
+          {% for pos in positions %}
+          {% set pm = position_metrics.get(pos.ticker.upper(), {}) %}
+          {% set trailing = pm.get('trailing_returns', {}) %}
+          {% set metrics = pm.get('metrics', {}) %}
+          <tr>
+            <td><span class="num" style="font-weight:600">{{ pos.ticker }}</span></td>
+            <td class="hide-mobile"><span class="muted" style="font-size:0.8rem">{{ pos.theme }}</span></td>
+            <td class="r"><span class="num">{{ pos.weight | pct_plain }}</span></td>
+            <td class="r"><span class="{{ trailing.get('1Y') | pct_class }}">{{ trailing.get('1Y') | pct }}</span></td>
+            <td class="r"><span class="num">{{ metrics.get('annualized_volatility') | pct }}</span></td>
+            <td class="r"><span class="{{ metrics.get('sharpe_ratio') | sign_class }}">{{ metrics.get('sharpe_ratio') | f2 }}</span></td>
+          </tr>
+          {% endfor %}
+          {% else %}
+          <tr><td colspan="6" style="text-align:center;padding:1.5rem;color:var(--muted)">No positions</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Theme Attribution (1Y)</div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr><th>Theme</th><th class="r">Weight</th><th class="r">Return</th><th class="r">Contribution</th></tr>
+        </thead>
+        <tbody>
+          {% if themes %}
+          {% for t in themes %}
+          <tr>
+            <td style="font-size:0.82rem">{{ t.theme }}</td>
+            <td class="r"><span class="num">{{ t.theme_weight | pct_plain }}</span></td>
+            <td class="r"><span class="{{ t.theme_return | pct_class }}">{{ t.theme_return | pct }}</span></td>
+            <td class="r"><span class="{{ t.portfolio_contribution | pct_class }}">{{ t.portfolio_contribution | pct }}</span></td>
+          </tr>
+          {% endfor %}
+          {% else %}
+          <tr><td colspan="4" style="text-align:center;padding:1.5rem;color:var(--muted)">No data</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<div class="card">
+  <div class="card-title">Effective Stock Exposures (top 15 across all ETFs)</div>
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Symbol</th>
+          <th class="r">Eff. Weight</th>
+          <th class="hide-mobile">Name</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if top_holdings %}
+        {% for h in top_holdings %}
+        <tr>
+          <td class="muted" style="font-size:0.78rem">{{ loop.index }}</td>
+          <td><span class="num" style="font-weight:600">{{ h.symbol }}</span></td>
+          <td class="r"><span class="num">{{ h.effective_weight | pct_plain }}</span></td>
+          <td class="hide-mobile" style="color:var(--muted);font-size:0.82rem">{{ h.name }}</td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr><td colspan="4" style="text-align:center;padding:1.5rem;color:var(--muted)">No holdings data</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const _cfg = {responsive: true, displayModeBar: false, scrollZoom: false};
+
+    var _C_BLUE = '#58a6ff', _C_GREY = '#8b949e', _C_GOLD = '#d29922';
+    var _plotLayout = {
+      paper_bgcolor:'#161b22', plot_bgcolor:'#0d1117',
+      font:{color:'#c9d1d9', family:"'JetBrains Mono', monospace", size:12},
+      margin:{l:60, r:140, t:20, b:40},
+      hoverlabel:{bgcolor:'#21262d', bordercolor:'#30363d', font:{color:'#e6edf3'}},
+      hovermode:'closest', showlegend:false,
+      xaxis:{gridcolor:'#21262d', type:'date', rangeslider:{visible:false}, autorange:true},
+      yaxis:{gridcolor:'#21262d', zeroline:true, zerolinecolor:'#30363d', ticksuffix:'%', autorange:true}
+    };
+
+    // ── Position performance chart ─────────────────────────────────────────────
+    const perfData = {{ perf_chart_json | safe }};
+    Plotly.react('perf-chart', perfData.data, perfData.layout, _cfg);
+
+    const _pd = {{ perf_data_json | safe }};
+    var _perfPeriod = 'ALL', _perfRes = 'Daily';
+
+    // Snapshot trace shells (type/mode/name/line/hovertemplate) without x/y data.
+    // Rebuilding from shells on every Plotly.react call avoids Plotly's internal
+    // mutation of the data array from a previous render.
+    var _perfShells = perfData.data.map(function(t) {
+      return {type: t.type, mode: t.mode, name: t.name, line: t.line, hovertemplate: t.hovertemplate};
+    });
+
+    // Spread right-edge annotations that would overlap each other.
+    function _deconflict(annotations, ys) {
+      if (annotations.length <= 1) return annotations;
+      var yMin = Infinity, yMax = -Infinity;
+      ys.forEach(function(arr) { arr.forEach(function(v) { if (isFinite(v) && v < yMin) yMin = v; if (isFinite(v) && v > yMax) yMax = v; }); });
+      var minGap = (yMax - yMin || 1) * 0.07;
+      var ann = annotations.map(function(a) { return Object.assign({}, a); });
+      ann.sort(function(a, b) { return a.y - b.y; });
+      for (var pass = 0; pass < 10; pass++) {
+        for (var i = 1; i < ann.length; i++) {
+          if (ann[i].y - ann[i-1].y < minGap) {
+            var mid = (ann[i].y + ann[i-1].y) / 2;
+            ann[i-1] = Object.assign({}, ann[i-1], {y: mid - minGap / 2});
+            ann[i]   = Object.assign({}, ann[i],   {y: mid + minGap / 2});
+          }
+        }
+      }
+      return ann;
+    }
+
+    function _updatePerf() {
+      var d = _pd[_perfPeriod] && _pd[_perfPeriod][_perfRes];
+      if (!d) return;
+      var empty = d.xs.every(function(arr) { return arr.length === 0; });
+      document.getElementById('perf-empty').style.display = empty ? 'block' : 'none';
+      document.getElementById('perf-chart').style.display = empty ? 'none' : 'block';
+      if (empty) return;
+      var annotations = _deconflict(d.annotations, d.ys);
+      var traces = _perfShells.map(function(shell, i) {
+        return Object.assign({}, shell, {x: d.xs[i] || [], y: d.ys[i] || []});
+      });
+      Plotly.react('perf-chart', traces, Object.assign({}, _plotLayout, {
+        height: 600, annotations: annotations
+      }), _cfg);
+    }
+
+    _updatePerf();
+
+    document.querySelectorAll('#perf-period-btns .perf-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('#perf-period-btns .perf-btn').forEach(function(b) { b.classList.remove('active'); });
+        this.classList.add('active');
+        _perfPeriod = this.dataset.period;
+        _updatePerf();
+      });
+    });
+
+    document.getElementById('perf-res').addEventListener('change', function() {
+      _perfRes = this.value;
+      _updatePerf();
+    });
+
+    // ── Portfolio comparison chart ─────────────────────────────────────────────
+    const _cd = {{ cum_data_json | safe }};
+    const _cumPortfolio = '{{ portfolio }}';
+    const _cumComps = {{ portfolio_compositions_json | safe }};
+    var _cumPeriod = 'ALL', _cumRes = 'Daily', _cumComp = '';
+
+    function _annLabel(name, y, color) {
+      return {
+        x: 1.02, y: y, xref: 'paper', yref: 'y',
+        text: '<b>' + name + '</b> ' + (y >= 0 ? '+' : '') + y.toFixed(1) + '%',
+        showarrow: false, xanchor: 'left', yanchor: 'middle',
+        font: {color: color, size: 11}
+      };
+    }
+
+    // Re-align a series to start at commonStart, re-normalizing ys to 0% at that point.
+    // Returns a new object; never mutates _cd.
+    function _alignedSeries(raw, commonStart) {
+      if (!raw || !raw.xs.length) return {xs:[], ys:[]};
+      if (raw.xs[0] >= commonStart) return {xs: raw.xs, ys: raw.ys};
+      var idx = 0;
+      while (idx < raw.xs.length - 1 && raw.xs[idx] < commonStart) idx++;
+      if (raw.xs[idx] < commonStart) return {xs:[], ys:[]};
+      var baseline = raw.ys[idx];
+      return {
+        xs: raw.xs.slice(idx),
+        ys: raw.ys.slice(idx).map(function(y) { return Math.round((y - baseline) * 100) / 100; })
+      };
+    }
+
+    function _updateCum() {
+      var d = _cd[_cumPeriod] && _cd[_cumPeriod][_cumRes];
+      if (!d) return;
+
+      var portD = d[_cumPortfolio] || {xs:[], ys:[]};
+      var spxD  = d['^SPX']       || {xs:[], ys:[]};
+      var compD = _cumComp ? (d[_cumComp] || {xs:[], ys:[]}) : null;
+
+      // Align all visible series to the latest first date so comparisons start at the same point.
+      var allStarts = [];
+      if (portD.xs.length) allStarts.push(portD.xs[0]);
+      if (spxD.xs.length)  allStarts.push(spxD.xs[0]);
+      if (compD && compD.xs.length) allStarts.push(compD.xs[0]);
+      if (allStarts.length > 1) {
+        var commonStart = allStarts.reduce(function(a, b) { return a > b ? a : b; });
+        portD = _alignedSeries(portD, commonStart);
+        spxD  = _alignedSeries(spxD,  commonStart);
+        if (compD) compD = _alignedSeries(compD, commonStart);
+      }
+
+      var traces = [], annotations = [], allYs = [];
+
+      if (portD.xs.length) {
+        traces.push({type:'scatter', mode:'lines', name:_cumPortfolio,
+          x:portD.xs, y:portD.ys, line:{color:_C_BLUE, width:2},
+          hovertemplate:'<b>'+_cumPortfolio+'</b><br>%{x}<br>%{y:+.1f}%<extra></extra>'});
+        annotations.push(_annLabel(_cumPortfolio, portD.ys[portD.ys.length-1], _C_BLUE));
+        allYs.push(portD.ys);
+      }
+      if (spxD.xs.length) {
+        traces.push({type:'scatter', mode:'lines', name:'SPX',
+          x:spxD.xs, y:spxD.ys, line:{color:_C_GREY, width:1.5, dash:'dot'},
+          hovertemplate:'<b>SPX</b><br>%{x}<br>%{y:+.1f}%<extra></extra>'});
+        annotations.push(_annLabel('SPX', spxD.ys[spxD.ys.length-1], _C_GREY));
+        allYs.push(spxD.ys);
+      }
+      if (compD && compD.xs.length) {
+        traces.push({type:'scatter', mode:'lines', name:_cumComp,
+          x:compD.xs, y:compD.ys, line:{color:_C_GOLD, width:2},
+          hovertemplate:'<b>'+_cumComp+'</b><br>%{x}<br>%{y:+.1f}%<extra></extra>'});
+        annotations.push(_annLabel(_cumComp, compD.ys[compD.ys.length-1], _C_GOLD));
+        allYs.push(compD.ys);
+      }
+
+      var empty = traces.length === 0;
+      document.getElementById('cum-empty').style.display = empty ? 'block' : 'none';
+      document.getElementById('cum-chart').style.display = empty ? 'none' : 'block';
+      if (!empty) {
+        Plotly.react('cum-chart', traces, Object.assign({}, _plotLayout, {
+          height: 400,
+          annotations: _deconflict(annotations, allYs)
+        }), _cfg);
+      }
+
+      // Composition display
+      var compEl = document.getElementById('cum-compositions');
+      if (!_cumComp) { compEl.style.display = 'none'; return; }
+      function _renderCol(name, positions, color) {
+        var pills = (positions || []).map(function(p) {
+          return '<span class="comp-pill"><span class="comp-ticker">'+p.ticker+'</span><span class="comp-weight">'+Math.round(p.weight*100)+'%</span></span>';
+        }).join('');
+        return '<div class="comp-col"><div class="comp-name" style="color:'+color+'">'+name+'</div><div class="comp-pills">'+pills+'</div></div>';
+      }
+      compEl.innerHTML = '<div class="comp-grid">'+_renderCol(_cumPortfolio, _cumComps[_cumPortfolio], _C_BLUE)+_renderCol(_cumComp, _cumComps[_cumComp], _C_GOLD)+'</div>';
+      compEl.style.display = 'block';
+    }
+
+    _updateCum();
+
+    document.querySelectorAll('#cum-period-btns .perf-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('#cum-period-btns .perf-btn').forEach(function(b) { b.classList.remove('active'); });
+        this.classList.add('active');
+        _cumPeriod = this.dataset.period;
+        _updateCum();
+      });
+    });
+
+    document.getElementById('cum-res').addEventListener('change', function() {
+      _cumRes = this.value;
+      _updateCum();
+    });
+
+    document.getElementById('cum-comp').addEventListener('change', function() {
+      _cumComp = this.value;
+      if (!_cumComp || (_cd['ALL'] && _cd['ALL']['Daily'] && _cd['ALL']['Daily'][_cumComp])) {
+        // Data already in _cd (active portfolio, SPX, or a previously fetched comparison)
+        _updateCum();
+        return;
+      }
+      // Lazy-fetch this portfolio's data, then merge into _cd
+      fetch('/api/comparison-data/' + encodeURIComponent(_cumComp))
+        .then(function(r) { return r.json(); })
+        .then(function(compData) {
+          Object.keys(compData).forEach(function(period) {
+            Object.keys(compData[period] || {}).forEach(function(res) {
+              if (_cd[period] && _cd[period][res]) {
+                Object.assign(_cd[period][res], compData[period][res]);
+              }
+            });
+          });
+          _updateCum();
+        })
+        .catch(function() { _updateCum(); });
+    });
+
+    // ── Static charts ──────────────────────────────────────────────────────────
+    const ddData = {{ dd_chart_json | safe }};
+    Plotly.react('dd-chart', ddData.data, ddData.layout, _cfg);
+
+    const trData = {{ tr_chart_json | safe }};
+    Plotly.react('tr-chart', trData.data, trData.layout, _cfg);
+
+    const tmData = {{ treemap_json | safe }};
+    Plotly.react('treemap', tmData.data, tmData.layout, _cfg);
+
+    const rrData = {{ rr_chart_json | safe }};
+    Plotly.react('rr-chart', rrData.data, rrData.layout, _cfg);
+  });
+
+  // ── Sync button ──────────────────────────────────────────────────────────────
+  var _syncBtn = document.getElementById('sync-btn');
+  if (_syncBtn) {
+    _syncBtn.addEventListener('click', function() {
+      _syncBtn.disabled = true;
+      _syncBtn.textContent = 'Syncing…';
+      fetch('/api/sync?portfolio={{ portfolio }}', {method: 'POST'})
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          var fb = document.getElementById('freshness-badge');
+          if (fb) fb.textContent = 'as of ' + d.freshness;
+          var sb = document.getElementById('sync-badge');
+          if (sb) { sb.textContent = '0d since sync'; sb.classList.remove('badge-stale'); }
+          var note = document.getElementById('sync-note');
+          if (note && d.insight) {
+            note.textContent = d.insight.body;
+            note.style.display = 'block';
+          }
+          _syncBtn.disabled = false;
+          _syncBtn.textContent = 'Sync';
+        })
+        .catch(function() {
+          _syncBtn.disabled = false;
+          _syncBtn.textContent = 'Sync';
+        });
+    });
+  }
+</script>
+{% endblock %}

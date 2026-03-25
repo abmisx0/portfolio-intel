@@ -1,0 +1,154 @@
+<!-- Alerts -->
+{% if alerts and alerts.total > 0 %}
+<div class="card">
+  <div class="card-title">⚠ Portfolio Alerts ({{ alerts.total }})</div>
+  <div class="alert-list">
+    {% for a in alerts.critical %}
+    <div class="alert-item alert-critical">
+      <span class="alert-label">Critical</span>{{ a.message }}
+    </div>
+    {% endfor %}
+    {% for a in alerts.warning %}
+    <div class="alert-item alert-warning">
+      <span class="alert-label">Warning</span>{{ a.message }}
+    </div>
+    {% endfor %}
+    {% for a in alerts.info %}
+    <div class="alert-item alert-info">
+      <span class="alert-label">Info</span>{{ a.message }}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Portfolio summary stats -->
+{% if port_metrics %}
+<div class="card">
+  <div class="card-title">Portfolio Summary (5Y) — {{ portfolio }}</div>
+  <div class="stat-grid">
+    <div class="stat">
+      <div class="stat-label">Ann. Return</div>
+      <div class="stat-value {{ port_metrics.get('annualized_return') | pct_class }}">{{ port_metrics.get('annualized_return') | pct }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Volatility</div>
+      <div class="stat-value num">{{ port_metrics.get('annualized_volatility') | pct }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Sharpe</div>
+      <div class="stat-value {{ port_metrics.get('sharpe_ratio') | sign_class }}">{{ port_metrics.get('sharpe_ratio') | f2 }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Sortino</div>
+      <div class="stat-value {{ port_metrics.get('sortino_ratio') | sign_class }}">{{ port_metrics.get('sortino_ratio') | f2 }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Max Drawdown</div>
+      <div class="stat-value neg">{{ port_metrics.get('max_drawdown') | pct }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Beta vs VOO</div>
+      <div class="stat-value num">{{ port_metrics.get('beta') | f2 }}</div>
+    </div>
+  </div>
+  {% if data_freshness %}<p class="muted" style="font-size:0.78rem;margin-top:0.75rem">Data as of {{ data_freshness }}</p>{% endif %}
+</div>
+{% endif %}
+
+<!-- Correlation heatmap -->
+<div class="card">
+  <div class="card-title">Correlation Matrix</div>
+  <div class="chart-wrap"><div id="heatmap"></div></div>
+</div>
+
+<!-- Theme attribution chart + table side by side -->
+<div class="grid-2">
+  <div class="card">
+    <div class="card-title">Theme Attribution (Trailing 1Y)</div>
+    <div class="chart-wrap"><div id="theme-bar"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Theme Attribution Detail</div>
+    <table class="data-table">
+      <thead><tr>
+        <th>Theme</th><th class="r">Wt</th><th class="r">Return</th><th class="r">Contribution</th>
+      </tr></thead>
+      <tbody>
+        {% for t in themes %}
+        <tr>
+          <td style="font-size:0.82rem">{{ t.theme }}</td>
+          <td class="r num">{{ t.theme_weight | pct_plain }}</td>
+          <td class="r"><span class="{{ t.theme_return | pct_class }}">{{ t.theme_return | pct }}</span></td>
+          <td class="r"><span class="{{ t.portfolio_contribution | pct_class }}">{{ t.portfolio_contribution | pct }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Per-position metrics -->
+<div class="card">
+  <div class="card-title">Per-Position Metrics</div>
+  <div style="overflow-x:auto">
+  <table class="data-table">
+    <thead><tr>
+      <th>Ticker</th><th>Theme</th><th class="r">Wt</th>
+      <th class="r">1Y Ret</th><th class="r">5Y Ann</th>
+      <th class="r">Vol</th><th class="r">Sharpe</th><th class="r">Beta</th>
+      <th class="r">30d Vol</th><th class="r">90d Vol</th>
+    </tr></thead>
+    <tbody>
+      {% for pm in position_metrics %}
+      {% if 'error' not in pm %}
+      {% set t = pm.trailing_returns %}
+      {% set m = pm.metrics %}
+      {% set r = pm.rolling %}
+      <tr>
+        <td><span class="num" style="font-weight:600">{{ pm.ticker }}</span></td>
+        <td><span class="muted" style="font-size:0.8rem">{{ pm.theme }}</span></td>
+        <td class="r num">{{ pm.weight | pct_plain }}</td>
+        <td class="r"><span class="{{ t.get('1Y') | pct_class }}">{{ t.get('1Y') | pct }}</span></td>
+        <td class="r"><span class="{{ m.get('annualized_return') | pct_class }}">{{ m.get('annualized_return') | pct }}</span></td>
+        <td class="r num">{{ m.get('annualized_volatility') | pct }}</td>
+        <td class="r"><span class="{{ m.get('sharpe_ratio') | sign_class }}">{{ m.get('sharpe_ratio') | f2 }}</span></td>
+        <td class="r num">{{ m.get('beta') | f2 }}</td>
+        <td class="r num">{{ r.get('30d', {}).get('annualized_volatility') | pct }}</td>
+        <td class="r num">{{ r.get('90d', {}).get('annualized_volatility') | pct }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<!-- Top stock exposures -->
+<div class="card">
+  <div class="card-title">Top Stock Exposures (effective weight across all ETFs)</div>
+  <table class="data-table">
+    <thead><tr><th>#</th><th>Symbol</th><th class="r">Eff. Weight</th><th>Name</th></tr></thead>
+    <tbody>
+      {% for h in top_holdings %}
+      <tr>
+        <td class="muted" style="font-size:0.78rem">{{ loop.index }}</td>
+        <td><span class="num" style="font-weight:600">{{ h.symbol }}</span></td>
+        <td class="r"><span class="num {% if h.effective_weight > 0.05 %}neg{% endif %}">{{ h.effective_weight | pct_plain }}</span></td>
+        <td style="color:var(--muted);font-size:0.82rem">{{ h.name }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+(function() {
+  const hm = {{ heatmap_json | safe }};
+  Plotly.react('heatmap', hm.data, hm.layout, {responsive: true, displayModeBar: false});
+
+  const bar = {{ bar_json | safe }};
+  Plotly.react('theme-bar', bar.data, bar.layout, {responsive: true, displayModeBar: false});
+})();
+</script>

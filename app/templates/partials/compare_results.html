@@ -1,0 +1,67 @@
+{% set a = data.ticker_a %}
+{% set b = data.ticker_b %}
+
+<div class="card" style="margin-top:0">
+  <div style="display:flex;align-items:baseline;gap:0.75rem;margin-bottom:0.5rem">
+    <span class="num" style="font-size:1.1rem;font-weight:700">{{ a }}</span>
+    <span class="muted">vs</span>
+    <span class="num" style="font-size:1.1rem;font-weight:700">{{ b }}</span>
+    {% if data.data_freshness %}<span class="badge">{{ data.data_freshness }}</span>{% endif %}
+  </div>
+  <div style="display:flex;gap:1.5rem;flex-wrap:wrap;font-size:0.82rem">
+    <span class="muted">Correlation: <span class="num" style="{% if data.correlation | float > 0.7 %}color:var(--red){% endif %}">{{ data.correlation | f2 }}</span></span>
+    <span class="muted">Holdings overlap: <span class="num">{{ data.cross_overlap_coefficient | pct_plain }}</span></span>
+    <span class="muted">Shared stocks: <span class="num">{{ data.shared_holdings_count }}</span></span>
+  </div>
+</div>
+
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr><th>Metric</th><th class="r">{{ a }}</th><th class="r">{{ b }}</th></tr>
+    </thead>
+    <tbody>
+      {% set rows = [
+        ('AUM',            data[a].etf_info.get('aum') | money,            data[b].etf_info.get('aum') | money),
+        ('Expense Ratio',  data[a].etf_info.get('expense_ratio') | pct_plain, data[b].etf_info.get('expense_ratio') | pct_plain),
+        ('Div. Yield',     data[a].etf_info.get('dividend_yield') | pct_plain, data[b].etf_info.get('dividend_yield') | pct_plain),
+      ] %}
+      {% for label, va, vb in rows %}
+      <tr><td>{{ label }}</td><td class="r num">{{ va }}</td><td class="r num">{{ vb }}</td></tr>
+      {% endfor %}
+
+      <tr><td colspan="3" style="padding:0.25rem;background:var(--surface2)"></td></tr>
+
+      {% set windows = ['1M','3M','6M','YTD','1Y','3Y','5Y'] %}
+      {% for w in windows %}
+      {% set va = data[a].trailing_returns.get(w) %}
+      {% set vb = data[b].trailing_returns.get(w) %}
+      <tr>
+        <td>{{ w }} Return</td>
+        <td class="r"><span class="{{ va | pct_class }}">{{ va | pct }}</span></td>
+        <td class="r"><span class="{{ vb | pct_class }}">{{ vb | pct }}</span></td>
+      </tr>
+      {% endfor %}
+
+      <tr><td colspan="3" style="padding:0.25rem;background:var(--surface2)"></td></tr>
+
+      {% set metric_rows = [
+        ('Ann. Return',  'annualized_return', 'pct'),
+        ('Volatility',   'annualized_volatility', 'pct'),
+        ('Sharpe',       'sharpe_ratio', 'f2'),
+        ('Sortino',      'sortino_ratio', 'f2'),
+        ('Max Drawdown', 'max_drawdown', 'pct'),
+        ('Beta vs VOO',  'beta', 'f2'),
+      ] %}
+      {% for label, key, fmt in metric_rows %}
+      {% set va = data[a].risk_metrics.get(key) %}
+      {% set vb = data[b].risk_metrics.get(key) %}
+      <tr>
+        <td>{{ label }}</td>
+        <td class="r"><span class="{% if fmt == 'pct' %}{{ va | pct_class }}{% else %}{{ va | sign_class }}{% endif %}">{% if fmt == 'pct' %}{{ va | pct }}{% else %}{{ va | f2 }}{% endif %}</span></td>
+        <td class="r"><span class="{% if fmt == 'pct' %}{{ vb | pct_class }}{% else %}{{ vb | sign_class }}{% endif %}">{% if fmt == 'pct' %}{{ vb | pct }}{% else %}{{ vb | f2 }}{% endif %}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Insights — Portfolio Intelligence{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Insights</h1>
+</div>
+
+{% if not entries %}
+<div class="card">
+  <p style="color:var(--muted); font-size:0.875rem;">No insights yet. Hit <strong>Sync</strong> on the Overview page to generate your first analysis note.</p>
+</div>
+{% else %}
+{% for e in entries %}
+<div class="card insight-card">
+  <div class="insight-header">
+    <span class="badge insight-trigger">{{ e.trigger }}</span>
+    <span class="insight-ts">{{ e.timestamp[:16].replace("T", " ") }} UTC</span>
+    {% if e.portfolio %}<span class="badge">{{ e.portfolio }}</span>{% endif %}
+  </div>
+  <div class="insight-title">{{ e.title }}</div>
+  <pre class="insight-body">{{ e.body }}</pre>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}

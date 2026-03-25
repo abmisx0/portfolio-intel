@@ -1,0 +1,89 @@
+{% set positions = data.positions %}
+{% set summary = data.summary %}
+{% set mode = data.mode %}
+{% set portfolio = data.portfolio %}
+
+<div class="card">
+  <div style="display:flex;align-items:baseline;gap:0.75rem;margin-bottom:1rem">
+    <div class="card-title" style="margin:0">
+      {{ 'Drift Analysis' if mode == 'drift' else 'Target Allocation' }}
+    </div>
+    <span class="badge">{{ portfolio }}</span>
+    <span class="badge">${{ "{:,.0f}".format(summary.total_value) }}</span>
+    {% if summary.data_freshness %}<span class="badge">prices {{ summary.data_freshness }}</span>{% endif %}
+  </div>
+
+  <div style="overflow-x:auto">
+  {% if mode == 'target' %}
+  <table class="data-table">
+    <thead><tr>
+      <th>Ticker</th><th>Theme</th>
+      <th class="r">Target Wt</th><th class="r">Target $</th>
+      <th class="r">Price</th><th class="r">Shares</th>
+    </tr></thead>
+    <tbody>
+      {% for p in positions %}
+      <tr>
+        <td><span class="num" style="font-weight:600">{{ p.ticker }}</span></td>
+        <td><span class="muted" style="font-size:0.8rem">{{ p.theme }}</span></td>
+        <td class="r num">{{ p.target_weight | pct_plain }}</td>
+        <td class="r num">${{ "{:,.0f}".format(p.target_dollars) }}</td>
+        <td class="r num">{% if p.current_price %}${{ "{:,.2f}".format(p.current_price) }}{% else %}—{% endif %}</td>
+        <td class="r num">{% if p.target_shares %}{{ "{:.1f}".format(p.target_shares) }}{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% else %}
+  <table class="data-table">
+    <thead><tr>
+      <th>Ticker</th>
+      <th class="r">Target</th><th class="r">Current</th><th class="r">Drift</th>
+      <th class="c">Action</th>
+      <th class="r">$ Amount</th><th class="r">Shares</th>
+    </tr></thead>
+    <tbody>
+      {% for p in positions %}
+      {% set drift = p.drift %}
+      <tr>
+        <td><span class="num" style="font-weight:600">{{ p.ticker }}</span></td>
+        <td class="r num">{{ p.target_weight | pct_plain }}</td>
+        <td class="r num">{{ p.current_weight | pct_plain }}</td>
+        <td class="r"><span class="{{ drift | pct_class }}">{{ drift | pct }}</span></td>
+        <td class="c">
+          {% if p.trade_direction == 'BUY' %}
+            <span style="color:var(--green);font-weight:600;font-size:0.8rem">▲ BUY</span>
+          {% elif p.trade_direction == 'SELL' %}
+            <span style="color:var(--red);font-weight:600;font-size:0.8rem">▼ SELL</span>
+          {% else %}
+            <span class="muted" style="font-size:0.8rem">HOLD</span>
+          {% endif %}
+        </td>
+        <td class="r num">
+          {% if p.trade_direction != 'HOLD' %}
+            ${{ "{:,.0f}".format(p.trade_dollars) }}
+          {% else %}—{% endif %}
+        </td>
+        <td class="r num">
+          {% if p.trade_shares and p.trade_direction != 'HOLD' %}
+            {{ "{:.1f}".format(p.trade_shares) }}
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <!-- Summary row -->
+  <div style="display:flex;gap:2rem;flex-wrap:wrap;margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border);font-size:0.85rem">
+    <span class="muted">Buys: <span class="num pos">{{ summary.buys }} positions · +${{ "{:,.0f}".format(summary.total_buy_dollars) }}</span></span>
+    <span class="muted">Sells: <span class="num neg">{{ summary.sells }} positions · -${{ "{:,.0f}".format(summary.total_sell_dollars) }}</span></span>
+    <span class="muted">Holds: <span class="num">{{ summary.holds }}</span></span>
+    {% if summary.max_drift_ticker %}
+    <span class="muted">Largest drift: <span class="num" style="color:var(--gold)">{{ summary.max_drift_ticker }} {{ summary.max_drift | pct }}</span></span>
+    {% endif %}
+  </div>
+  {% endif %}
+  </div>
+</div>

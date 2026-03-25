@@ -1,0 +1,37 @@
+{% if items %}
+{% for item in items %}
+<tr>
+  <td><span class="num" style="font-weight:600">{{ item.ticker }}</span></td>
+  <td class="muted" style="font-size:0.82rem">{{ item.added_date }}</td>
+  <td style="font-size:0.82rem">{{ item.notes or '—' }}</td>
+  <td style="white-space:nowrap">
+    <button class="btn btn-outline"
+            style="font-size:0.75rem;padding:0.2rem 0.6rem;margin-right:0.4rem"
+            hx-get="/watchlist/screen/{{ item.ticker }}"
+            hx-target="#wl-screen-results"
+            hx-swap="innerHTML"
+            hx-indicator="#wl-screen-loading">
+      Screen
+    </button>
+    <button class="btn"
+            style="font-size:0.75rem;padding:0.2rem 0.6rem;background:var(--surface2);color:var(--red);border:1px solid var(--red)"
+            hx-post="/watchlist/remove"
+            hx-vals='{"ticker": "{{ item.ticker }}"}'
+            hx-target="#wl-rows"
+            hx-swap="innerHTML">
+      ✕
+    </button>
+  </td>
+</tr>
+{% endfor %}
+{% else %}
+<tr>
+  <td colspan="4" class="muted" style="text-align:center;padding:1.5rem;font-size:0.85rem">
+    No candidates saved yet. Add a ticker above.
+  </td>
+</tr>
+{% endif %}
+
+<div id="wl-screen-loading" class="htmx-indicator" style="display:none">
+  <div class="spinner" style="padding:0.5rem 0.75rem">Loading screener…</div>
+</div>
