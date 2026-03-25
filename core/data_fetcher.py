@@ -65,6 +65,13 @@ CREATE TABLE IF NOT EXISTS sectors (
     payload     TEXT    NOT NULL,
     PRIMARY KEY (ticker, fetch_date)
 );
+
+CREATE TABLE IF NOT EXISTS etf_info (
+    ticker      TEXT    NOT NULL,
+    fetch_date  TEXT    NOT NULL,
+    payload     TEXT    NOT NULL,
+    PRIMARY KEY (ticker, fetch_date)
+);
 """
 
 
@@ -467,6 +474,61 @@ def _fetch_sectors_yfinance(ticker: str) -> List[dict]:
     except Exception as exc:
         logger.warning("Could not fetch sectors for %s: %s", ticker, exc)
         return []
+
+
+# ── ETF Info Fetching ──────────────────────────────────────────────────────────
+
+def get_etf_info(ticker: str) -> dict:
+    """
+    Return ETF metadata: name, expense_ratio, aum, dividend_yield, category, fund_family.
+
+    Cached for HOLDINGS_CACHE_TTL_DAYS. Falls back to empty dict on failure.
+    Eliminates redundant yfinance HTTP calls when the same ticker is queried
+    multiple times in a session or across runs on the same day.
+    """
+    ticker = ticker.upper()
+    today = date.today()
+    cutoff = (today - timedelta(days=HOLDINGS_CACHE_TTL_DAYS)).isoformat()
+
+    with _db() as conn:
+        row = conn.execute(
+            """SELECT payload FROM etf_info
+               WHERE ticker = ? AND fetch_date >= ?
+               ORDER BY fetch_date DESC LIMIT 1""",
+            (ticker, cutoff),
+        ).fetchone()
+
+        if row:
+            logger.debug("ETF info cache hit for %s", ticker)
+            return json.loads(row["payload"])
+
+        logger.info("Fetching ETF info for %s", ticker)
+        info = _fetch_etf_info_yf(ticker)
+
+        conn.execute(
+            "INSERT OR REPLACE INTO etf_info (ticker, fetch_date, payload) VALUES (?, ?, ?)",
+            (ticker, today.isoformat(), json.dumps(info)),
+        )
+        conn.commit()
+
+    return info
+
+
+def _fetch_etf_info_yf(ticker: str) -> dict:
+    """Fetch ETF metadata from yfinance. Returns {} on failure."""
+    try:
+        info = yf.Ticker(ticker).info or {}
+        return {
+            "name": info.get("longName") or info.get("shortName", ticker),
+            "expense_ratio": info.get("annualReportExpenseRatio") or info.get("expenseRatio"),
+            "aum": info.get("totalAssets"),
+            "dividend_yield": info.get("yield") or info.get("dividendYield"),
+            "category": info.get("category"),
+            "fund_family": info.get("fundFamily"),
+        }
+    except Exception as exc:
+        logger.warning("Could not fetch ETF info for %s: %s", ticker, exc)
+        return {}
 
 
 # ── Freshness Helper ───────────────────────────────────────────────────────────

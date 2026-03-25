@@ -17,13 +17,11 @@ from datetime import date, timedelta
 from typing import Dict, List, Optional
 
 import pandas as pd
-import yfinance as yf
-
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import PORTFOLIOS, RISK_FREE_RATE, LOOKBACK_5Y, BENCHMARK_TICKER
-from core.data_fetcher import get_close_series, price_map_freshness, get_etf_sectors
+from core.data_fetcher import get_close_series, price_map_freshness, get_etf_sectors, get_etf_info
 from core.analytics import (
     compute_metrics,
     trailing_return_windows,
@@ -41,25 +39,6 @@ from core.holdings import (
 logger = logging.getLogger(__name__)
 
 _5Y_START = LOOKBACK_5Y
-
-
-# ── ETF metadata ───────────────────────────────────────────────────────────────
-
-def _fetch_etf_info(ticker: str) -> dict:
-    """Pull expense ratio, AUM, dividend yield, name from yfinance."""
-    try:
-        info = yf.Ticker(ticker).info or {}
-        return {
-            "name": info.get("longName") or info.get("shortName", ticker),
-            "expense_ratio": info.get("annualReportExpenseRatio") or info.get("expenseRatio"),
-            "aum": info.get("totalAssets"),
-            "dividend_yield": info.get("yield") or info.get("dividendYield"),
-            "category": info.get("category"),
-            "fund_family": info.get("fundFamily"),
-        }
-    except Exception as exc:
-        logger.warning("Could not fetch info for %s: %s", ticker, exc)
-        return {}
 
 
 
@@ -103,7 +82,7 @@ def screen(
     candidate_trailing = trailing_return_windows(candidate_series)
 
     # ── ETF metadata ───────────────────────────────────────────────────────────
-    etf_info = _fetch_etf_info(candidate_ticker)
+    etf_info = get_etf_info(candidate_ticker)
 
     # ── Correlation with each portfolio position ───────────────────────────────
     correlations = {}
@@ -162,7 +141,7 @@ def compare_multi(tickers: List[str]) -> dict:
             price_map[t] = s
             metrics_map[t] = compute_metrics(s, benchmark=benchmark, label=t)
             trailing_map[t] = trailing_return_windows(s)
-            info_map[t] = _fetch_etf_info(t)
+            info_map[t] = get_etf_info(t)
             commodity_map[t] = commodity_context(t, s)
             sectors_map[t] = get_etf_sectors(t)
 
@@ -198,8 +177,8 @@ def compare(ticker_a: str, ticker_b: str) -> dict:
     trailing_a = trailing_return_windows(series_a)
     trailing_b = trailing_return_windows(series_b)
 
-    info_a = _fetch_etf_info(ticker_a)
-    info_b = _fetch_etf_info(ticker_b)
+    info_a = get_etf_info(ticker_a)
+    info_b = get_etf_info(ticker_b)
 
     corr_ab = _round(correlation(series_a, series_b))
 
