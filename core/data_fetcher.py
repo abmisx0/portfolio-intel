@@ -328,39 +328,49 @@ def get_close_series(
     return df["close"].rename(ticker)
 
 
-# ── Holdings Fetching ──────────────────────────────────────────────────────────
+# ── Shared cache helper ────────────────────────────────────────────────────────
 
-def get_holdings(ticker: str) -> List[dict]:
+def _yf_cached(table: str, ticker: str, fetch_fn):
     """
-    Return ETF top holdings as a list of {symbol, weight, name}.
+    Read JSON payload from a SQLite cache table or call fetch_fn on miss.
 
-    Cached for HOLDINGS_CACHE_TTL_DAYS. Falls back to empty list on failure.
+    TTL is HOLDINGS_CACHE_TTL_DAYS. The read and write each use a separate
+    connection so the network call in fetch_fn is never made while a DB
+    connection is held open.
     """
     today = date.today()
     cutoff = (today - timedelta(days=HOLDINGS_CACHE_TTL_DAYS)).isoformat()
 
     with _db() as conn:
         row = conn.execute(
-            """SELECT payload FROM holdings
-               WHERE ticker = ? AND fetch_date >= ?
-               ORDER BY fetch_date DESC LIMIT 1""",
+            f"SELECT payload FROM {table}"                    # nosec: table is internal constant
+            " WHERE ticker = ? AND fetch_date >= ?"
+            " ORDER BY fetch_date DESC LIMIT 1",
             (ticker, cutoff),
         ).fetchone()
 
-        if row:
-            logger.debug("Holdings cache hit for %s", ticker)
-            return json.loads(row["payload"])
+    if row:
+        logger.debug("Cache hit: %s/%s", table, ticker)
+        return json.loads(row["payload"])
 
-        logger.info("Fetching holdings for %s", ticker)
-        holdings = _fetch_holdings_yfinance(ticker)
+    logger.info("Fetching %s for %s", table, ticker)
+    result = fetch_fn(ticker)
 
+    with _db() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO holdings (ticker, fetch_date, payload) VALUES (?, ?, ?)",
-            (ticker, today.isoformat(), json.dumps(holdings)),
+            f"INSERT OR REPLACE INTO {table} (ticker, fetch_date, payload) VALUES (?, ?, ?)",  # nosec
+            (ticker, today.isoformat(), json.dumps(result)),
         )
         conn.commit()
 
-    return holdings
+    return result
+
+
+# ── Holdings Fetching ──────────────────────────────────────────────────────────
+
+def get_holdings(ticker: str) -> List[dict]:
+    """Return ETF top holdings as [{symbol, weight, name}]. Cached for HOLDINGS_CACHE_TTL_DAYS."""
+    return _yf_cached("holdings", ticker.upper(), _fetch_holdings_yfinance)
 
 
 def _fetch_holdings_yfinance(ticker: str) -> List[dict]:
@@ -419,35 +429,9 @@ def get_etf_sectors(ticker: str) -> List[dict]:
     """
     Return ETF sector weights as [{sector, weight}], sorted by weight descending.
 
-    Cached for HOLDINGS_CACHE_TTL_DAYS. Falls back to empty list on failure.
-    Weight values are fractions (e.g. 0.95 = 95%).
+    Cached for HOLDINGS_CACHE_TTL_DAYS. Weight values are fractions (e.g. 0.95 = 95%).
     """
-    ticker = ticker.upper()
-    today = date.today()
-    cutoff = (today - timedelta(days=HOLDINGS_CACHE_TTL_DAYS)).isoformat()
-
-    with _db() as conn:
-        row = conn.execute(
-            """SELECT payload FROM sectors
-               WHERE ticker = ? AND fetch_date >= ?
-               ORDER BY fetch_date DESC LIMIT 1""",
-            (ticker, cutoff),
-        ).fetchone()
-
-        if row:
-            logger.debug("Sectors cache hit for %s", ticker)
-            return json.loads(row["payload"])
-
-        logger.info("Fetching sectors for %s", ticker)
-        sectors = _fetch_sectors_yfinance(ticker)
-
-        conn.execute(
-            "INSERT OR REPLACE INTO sectors (ticker, fetch_date, payload) VALUES (?, ?, ?)",
-            (ticker, today.isoformat(), json.dumps(sectors)),
-        )
-        conn.commit()
-
-    return sectors
+    return _yf_cached("sectors", ticker.upper(), _fetch_sectors_yfinance)
 
 
 def _fetch_sectors_yfinance(ticker: str) -> List[dict]:
@@ -479,39 +463,8 @@ def _fetch_sectors_yfinance(ticker: str) -> List[dict]:
 # ── ETF Info Fetching ──────────────────────────────────────────────────────────
 
 def get_etf_info(ticker: str) -> dict:
-    """
-    Return ETF metadata: name, expense_ratio, aum, dividend_yield, category, fund_family.
-
-    Cached for HOLDINGS_CACHE_TTL_DAYS. Falls back to empty dict on failure.
-    Eliminates redundant yfinance HTTP calls when the same ticker is queried
-    multiple times in a session or across runs on the same day.
-    """
-    ticker = ticker.upper()
-    today = date.today()
-    cutoff = (today - timedelta(days=HOLDINGS_CACHE_TTL_DAYS)).isoformat()
-
-    with _db() as conn:
-        row = conn.execute(
-            """SELECT payload FROM etf_info
-               WHERE ticker = ? AND fetch_date >= ?
-               ORDER BY fetch_date DESC LIMIT 1""",
-            (ticker, cutoff),
-        ).fetchone()
-
-        if row:
-            logger.debug("ETF info cache hit for %s", ticker)
-            return json.loads(row["payload"])
-
-        logger.info("Fetching ETF info for %s", ticker)
-        info = _fetch_etf_info_yf(ticker)
-
-        conn.execute(
-            "INSERT OR REPLACE INTO etf_info (ticker, fetch_date, payload) VALUES (?, ?, ?)",
-            (ticker, today.isoformat(), json.dumps(info)),
-        )
-        conn.commit()
-
-    return info
+    """Return ETF metadata: name, expense_ratio, aum, dividend_yield, category, fund_family. Cached for HOLDINGS_CACHE_TTL_DAYS."""
+    return _yf_cached("etf_info", ticker.upper(), _fetch_etf_info_yf)
 
 
 def _fetch_etf_info_yf(ticker: str) -> dict:
