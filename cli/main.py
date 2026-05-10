@@ -24,6 +24,7 @@ from cli.commands.watchlist import watchlist_cmd
 from cli.commands.rebalance import rebalance_cmd
 from cli.commands.alerts import alerts_cmd
 from cli.commands.optimize import optimize_cmd
+from cli.commands.positions import positions_cmd
 
 
 @click.group()
@@ -42,6 +43,7 @@ cli.add_command(watchlist_cmd, name="watchlist")
 cli.add_command(rebalance_cmd, name="rebalance")
 cli.add_command(alerts_cmd, name="alerts")
 cli.add_command(optimize_cmd, name="optimize")
+cli.add_command(positions_cmd, name="positions")
 
 
 @cli.command()
