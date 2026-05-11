@@ -2,9 +2,12 @@
 Robinhood account data via robin_stocks.
 
 READ-ONLY. The only robin_stocks calls permitted here are:
-    rh.login()                           — authentication
-    rh.account.build_holdings()          — current positions
-    rh.profiles.load_portfolio_profile() — portfolio equity
+    rh.login()                              — authentication
+    rh.account.build_holdings()             — current equity positions
+    rh.profiles.load_portfolio_profile()    — portfolio equity
+    rh.options.get_open_option_positions()  — open options positions
+    rh.orders.get_all_open_option_orders()  — pending options orders
+    rh.get_watchlist_by_name()             — watchlist tickers
 
 The rh module is stored in a private module-level cache after login and
 never returned or exposed to callers — all public functions return plain
@@ -89,9 +92,91 @@ def get_portfolio_value() -> float:
     return float(value)
 
 
+def get_option_positions() -> list[dict]:
+    """Return open options positions as a list of normalized dicts.
+
+    Strike and option_type are not on the position record — they require a
+    secondary fetch of the option instrument by ID.
+    """
+    rh = _require_login()
+    raw: list = rh.options.get_open_option_positions() or []
+    results = []
+    for pos in raw:
+        try:
+            option_id = pos.get("option_id") or ""
+            strike = 0.0
+            option_type = ""
+            if option_id:
+                instrument = rh.options.get_option_instrument_data_by_id(option_id) or {}
+                strike = float(instrument.get("strike_price") or 0)
+                option_type = (instrument.get("type") or "").lower()
+            results.append({
+                "ticker": (pos.get("chain_symbol") or "").upper(),
+                "expiration": pos.get("expiration_date", ""),
+                "strike": strike,
+                "option_type": option_type,
+                "position_type": (pos.get("type") or "").lower(),  # "short" or "long"
+                "quantity": float(pos.get("quantity") or 0),
+                "avg_price": float(pos.get("average_price") or 0),
+                "trade_value_multiplier": float(pos.get("trade_value_multiplier") or 100),
+            })
+        except (TypeError, ValueError):
+            logger.warning("Skipping malformed option position: %s", pos.get("id"))
+    return results
+
+
+def get_pending_option_orders() -> list[dict]:
+    """Return open (pending/queued) options orders — these are your live asks."""
+    rh = _require_login()
+    raw: list = rh.orders.get_all_open_option_orders() or []
+    results = []
+    for order in raw:
+        legs = order.get("legs") or []
+        for leg in legs:
+            try:
+                results.append({
+                    "ticker": (order.get("chain_symbol") or "").upper(),
+                    "expiration": leg.get("expiration_date", ""),
+                    "strike": float(leg.get("strike_price") or 0),
+                    "option_type": (leg.get("option_type") or "").lower(),
+                    "side": (leg.get("side") or "").lower(),
+                    "quantity": float(order.get("quantity") or 0),
+                    "ask_price": float(order.get("price") or 0),
+                    "direction": (order.get("direction") or "").lower(),
+                    "status": (order.get("derived_state") or order.get("state") or "").lower(),
+                })
+            except (TypeError, ValueError):
+                logger.warning("Skipping malformed option order: %s", order.get("id"))
+    return results
+
+
 def get_account_data() -> tuple[dict[str, dict], float]:
     """Return (positions, total_value) in one call, fetching both endpoints in parallel."""
     with ThreadPoolExecutor(max_workers=2) as executor:
         positions_future = executor.submit(get_positions)
         value_future = executor.submit(get_portfolio_value)
         return positions_future.result(), value_future.result()
+
+
+def get_watchlist(name: str = "Watchlist") -> list[dict]:
+    """Return tickers from a Robinhood watchlist as a list of normalized dicts."""
+    rh = _require_login()
+    raw: dict = rh.get_watchlist_by_name(name) or {}
+    results = []
+    for item in raw.get("results") or []:
+        ticker = (item.get("symbol") or "").upper()
+        if not ticker:
+            continue
+        try:
+            results.append({
+                "ticker": ticker,
+                "name": item.get("name") or "",
+                "price": float(item.get("price") or 0),
+                "one_day_pct": float(item.get("one_day_percent_change") or 0),
+                "high_52w": float(item.get("high_52_weeks") or 0),
+                "low_52w": float(item.get("low_52_weeks") or 0),
+                "in_portfolio": bool(item.get("holdings")),
+            })
+        except (TypeError, ValueError):
+            logger.warning("Skipping malformed watchlist item: %s", ticker)
+    return results

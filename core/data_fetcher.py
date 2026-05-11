@@ -328,6 +328,73 @@ def get_close_series(
     return df["close"].rename(ticker)
 
 
+def prefetch_prices(tickers: List[str], start: date, end: date) -> None:
+    """
+    Batch-download prices for multiple tickers in a single yfinance call and
+    populate the SQLite cache. Tickers already fully cached for [start, end]
+    are skipped. Falls back to per-ticker fetch for any that fail in the batch.
+
+    Use this before calling get_close_series in a loop to avoid N sequential
+    HTTP requests — especially useful for large discovery universes.
+    """
+    if isinstance(start, str):
+        start = date.fromisoformat(start)
+    if isinstance(end, str):
+        end = date.fromisoformat(end)
+
+    # Determine which tickers are missing data for the requested window
+    uncached: List[str] = []
+    with _db() as conn:
+        for ticker in tickers:
+            min_d, max_d = _cached_date_range(conn, ticker)
+            if min_d is None or start < min_d or (end > max_d and (end - max_d).days > 3):
+                uncached.append(ticker)
+
+    if not uncached:
+        return
+
+    logger.info("Batch prefetch: %d tickers for [%s → %s]", len(uncached), start, end)
+    buf = io.StringIO()
+    try:
+        with redirect_stdout(buf), redirect_stderr(buf):
+            raw = yf.download(
+                uncached,
+                start=start.isoformat(),
+                end=(end + timedelta(days=1)).isoformat(),
+                auto_adjust=True,
+                progress=False,
+            )
+    except Exception as exc:
+        logger.warning("Batch prefetch failed (%s); falling back to per-ticker fetch", exc)
+        raw = pd.DataFrame()
+
+    if raw.empty:
+        # Full batch failed — fall back to sequential (handled by normal get_prices calls)
+        return
+
+    # Batch result has a MultiIndex: (field, ticker) or just (field,) for single ticker
+    if isinstance(raw.columns, pd.MultiIndex):
+        close_all = raw["Close"] if "Close" in raw.columns.get_level_values(0) else pd.DataFrame()
+    else:
+        close_all = raw[["Close"]].rename(columns={"Close": uncached[0]}) if "Close" in raw.columns else pd.DataFrame()
+
+    if close_all.empty:
+        return
+
+    with _db() as conn:
+        for ticker in close_all.columns:
+            series = close_all[ticker].dropna()
+            if series.empty:
+                continue
+            df = series.rename("Close").to_frame()
+            df.index = pd.to_datetime(df.index)
+            full_df = pd.DataFrame({
+                "Open": df["Close"], "High": df["Close"],
+                "Low": df["Close"], "Close": df["Close"], "Volume": 0,
+            })
+            _insert_prices(conn, str(ticker), full_df)
+
+
 # ── Shared cache helper ────────────────────────────────────────────────────────
 
 def _yf_cached(table: str, ticker: str, fetch_fn):

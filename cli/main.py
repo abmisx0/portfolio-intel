@@ -25,6 +25,7 @@ from cli.commands.rebalance import rebalance_cmd
 from cli.commands.alerts import alerts_cmd
 from cli.commands.optimize import optimize_cmd
 from cli.commands.positions import positions_cmd
+from cli.commands.advise import advise_cmd
 
 
 @click.group()
@@ -44,6 +45,7 @@ cli.add_command(rebalance_cmd, name="rebalance")
 cli.add_command(alerts_cmd, name="alerts")
 cli.add_command(optimize_cmd, name="optimize")
 cli.add_command(positions_cmd, name="positions")
+cli.add_command(advise_cmd, name="advise")
 
 
 @cli.command()
