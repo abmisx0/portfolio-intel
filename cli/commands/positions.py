@@ -5,11 +5,12 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import click
+from concurrent.futures import ThreadPoolExecutor
 from tabulate import tabulate
 
 from cli.formatters import build_envelope, print_json
 from config import PORTFOLIOS
-from core.broker import login, get_account_data
+from core.broker import login, get_account_data, get_purchase_dates
 from core.rebalancer import compute_rebalance
 
 
@@ -27,7 +28,11 @@ def positions_cmd(portfolio: str | None, fmt: str):
     """
     try:
         login()
-        holdings, total_value = get_account_data()
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            account_future = executor.submit(get_account_data)
+            purchase_future = executor.submit(get_purchase_dates)
+        holdings, total_value = account_future.result()
+        purchase_dates = purchase_future.result()
     except Exception as e:
         click.echo(f"  Robinhood error: {e}", err=True)
         sys.exit(1)
@@ -44,7 +49,8 @@ def positions_cmd(portfolio: str | None, fmt: str):
     plan = compute_rebalance(portfolio, total_value, current_weights) if portfolio else None
 
     if fmt == "json":
-        payload: dict = {"total_value": total_value, "positions": holdings}
+        positions_out = {t: {**d, **purchase_dates.get(t, {})} for t, d in holdings.items()}
+        payload: dict = {"total_value": total_value, "positions": positions_out}
         if plan:
             payload["rebalance"] = plan
         print_json(build_envelope(
@@ -60,6 +66,16 @@ def positions_cmd(portfolio: str | None, fmt: str):
 
     rows = []
     for ticker, d in sorted(holdings.items(), key=lambda x: -x[1]["market_value"]):
+        pd_info = purchase_dates.get(ticker, {})
+        first_buy = pd_info.get("first_purchase") or "—"
+        ltcg_date = pd_info.get("ltcg_all_lots_date")
+        has_stcg = pd_info.get("has_short_term_lots")
+        if has_stcg and ltcg_date:
+            tax_flag = f"STCG→LTCG {ltcg_date}"
+        elif has_stcg is False:
+            tax_flag = "LTCG"
+        else:
+            tax_flag = "—"
         rows.append([
             ticker,
             f"{d['shares']:.4f}".rstrip("0").rstrip("."),
@@ -68,11 +84,14 @@ def positions_cmd(portfolio: str | None, fmt: str):
             f"{d['portfolio_pct']*100:.1f}%",
             f"${d['avg_cost']:,.2f}",
             f"{d['gain_pct']:+.1f}%",
+            first_buy,
+            tax_flag,
         ])
 
     click.echo(tabulate(
         rows,
-        headers=["Ticker", "Shares", "Price", "Market Value", "Portfolio %", "Avg Cost", "G/L%"],
+        headers=["Ticker", "Shares", "Price", "Market Value", "Portfolio %", "Avg Cost", "G/L%",
+                 "First Buy", "Tax Status"],
         tablefmt="simple",
     ))
     click.echo(f"\n  Total Portfolio Value: ${total_value:,.2f}")

@@ -2,12 +2,14 @@
 Robinhood account data via robin_stocks.
 
 READ-ONLY. The only robin_stocks calls permitted here are:
-    rh.login()                              — authentication
-    rh.account.build_holdings()             — current equity positions
-    rh.profiles.load_portfolio_profile()    — portfolio equity
-    rh.options.get_open_option_positions()  — open options positions
-    rh.orders.get_all_open_option_orders()  — pending options orders
-    rh.get_watchlist_by_name()             — watchlist tickers
+    rh.login()                                      — authentication
+    rh.account.build_holdings()                     — current equity positions
+    rh.profiles.load_portfolio_profile()            — portfolio equity
+    rh.options.get_open_option_positions()          — open options positions
+    rh.orders.get_all_open_option_orders()          — pending options orders
+    rh.orders.get_all_stock_orders()                — equity order history
+    rh.stocks.get_instrument_by_url()               — resolve instrument URL → ticker
+    rh.get_watchlist_by_name()                      — watchlist tickers
 
 The rh module is stored in a private module-level cache after login and
 never returned or exposed to callers — all public functions return plain
@@ -22,10 +24,12 @@ from __future__ import annotations
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 
 logger = logging.getLogger(__name__)
 
-_rh_module = None  # populated by login(); never exposed to callers
+_rh_module = None       # populated by login(); never exposed to callers
+_instrument_cache: dict[str, str] = {}  # instrument URL → ticker symbol
 
 
 def login() -> None:
@@ -47,6 +51,19 @@ def _require_login():
     if _rh_module is None:
         raise RuntimeError("Call broker.login() before fetching Robinhood data")
     return _rh_module
+
+
+def _resolve_instrument_url(rh, url: str) -> str:
+    """Resolve a Robinhood instrument URL to an uppercase ticker symbol."""
+    if url in _instrument_cache:
+        return _instrument_cache[url]
+    try:
+        data = rh.stocks.get_instrument_by_url(url) or {}
+        ticker = (data.get("symbol") or "").upper()
+    except Exception:
+        ticker = ""
+    _instrument_cache[url] = ticker
+    return ticker
 
 
 def get_positions() -> dict[str, dict]:
@@ -115,7 +132,7 @@ def get_option_positions() -> list[dict]:
                 "expiration": pos.get("expiration_date", ""),
                 "strike": strike,
                 "option_type": option_type,
-                "position_type": (pos.get("type") or "").lower(),  # "short" or "long"
+                "position_type": (pos.get("type") or "").lower(),
                 "quantity": float(pos.get("quantity") or 0),
                 "avg_price": float(pos.get("average_price") or 0),
                 "trade_value_multiplier": float(pos.get("trade_value_multiplier") or 100),
@@ -156,6 +173,73 @@ def get_account_data() -> tuple[dict[str, dict], float]:
         positions_future = executor.submit(get_positions)
         value_future = executor.submit(get_portfolio_value)
         return positions_future.result(), value_future.result()
+
+
+def get_purchase_dates() -> dict[str, dict]:
+    """
+    Return per-ticker purchase lot summary derived from filled equity order history.
+
+    Resolves each order's instrument URL to a ticker symbol (cached per process).
+    Only filled buy orders are counted; sells are ignored so cancelled/partial
+    orders don't corrupt the date range.
+
+    Returns:
+        {
+          TICKER: {
+            "first_purchase":      "YYYY-MM-DD",  # oldest filled buy lot
+            "last_purchase":       "YYYY-MM-DD",  # most recent filled buy lot
+            "has_short_term_lots": bool,           # any lot < 1 year old today
+            "ltcg_all_lots_date":  "YYYY-MM-DD",  # date all lots become LTCG
+          }
+        }
+    """
+    rh = _require_login()
+    today = date.today()
+    one_year_ago = today.replace(year=today.year - 1)
+
+    orders = rh.orders.get_all_stock_orders() or []
+
+    unique_urls = {
+        order["instrument"]
+        for order in orders
+        if order.get("side") == "buy"
+        and order.get("state") == "filled"
+        and order.get("instrument")
+    }
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        pool.map(lambda u: _resolve_instrument_url(rh, u), unique_urls)
+
+    lots: dict[str, list[date]] = {}
+    for order in orders:
+        if order.get("side") != "buy" or order.get("state") != "filled":
+            continue
+        url = order.get("instrument") or ""
+        tx_str = order.get("last_transaction_at") or ""
+        if not url or not tx_str:
+            continue
+        try:
+            tx_date = date.fromisoformat(tx_str[:10])
+        except ValueError:
+            continue
+        ticker = _resolve_instrument_url(rh, url)
+        if ticker:
+            lots.setdefault(ticker, []).append(tx_date)
+
+    result: dict[str, dict] = {}
+    for ticker, dates in lots.items():
+        dates.sort()
+        last = dates[-1]
+        try:
+            ltcg_date = last.replace(year=last.year + 1)
+        except ValueError:
+            ltcg_date = last.replace(year=last.year + 1, day=28)
+        result[ticker] = {
+            "first_purchase": str(dates[0]),
+            "last_purchase": str(last),
+            "has_short_term_lots": any(d > one_year_ago for d in dates),
+            "ltcg_all_lots_date": str(ltcg_date),
+        }
+    return result
 
 
 def get_watchlist(name: str = "Watchlist") -> list[dict]:
