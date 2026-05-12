@@ -11,8 +11,10 @@ import numpy as np
 import pandas as pd
 from tabulate import tabulate
 
+from concurrent.futures import ThreadPoolExecutor
+
 from cli.formatters import build_envelope, print_json
-from core.broker import login, get_account_data, get_watchlist
+from core.broker import login, get_account_data, get_watchlist, get_purchase_dates
 from core.data_fetcher import get_close_series, prefetch_prices
 from core.analytics import TRADING_DAYS, _get_rfr
 from config import PORTFOLIOS
@@ -265,6 +267,18 @@ def _fmt_metric(v) -> str:
 def _fmt_pct(v) -> str:
     return f"{v:.0%}" if v is not None and not np.isnan(v) else "—"
 
+def _tax_fields(pd_info: dict) -> dict:
+    has_stcg = pd_info.get("has_short_term_lots")
+    ltcg_date = pd_info.get("ltcg_all_lots_date")
+    if has_stcg and ltcg_date:
+        status = f"STCG→LTCG {ltcg_date}"
+    elif has_stcg is False:
+        status = "LTCG"
+    else:
+        status = None
+    return {"tax_status": status, "ltcg_date": ltcg_date, "first_purchase": pd_info.get("first_purchase")}
+
+
 def _trim_signal(r) -> str:
     ds = r.get("delta_sharpe") or 0
     ps = r.get("pos_sharpe") or 0
@@ -328,8 +342,13 @@ def advise_cmd(portfolio: str | None, discoveries: int, fmt: str):
 
     try:
         login()
-        holdings, total_value = get_account_data()
-        watchlist = get_watchlist()
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            account_future = executor.submit(get_account_data)
+            watchlist_future = executor.submit(get_watchlist)
+            purchase_future = executor.submit(get_purchase_dates)
+        holdings, total_value = account_future.result()
+        watchlist = watchlist_future.result()
+        purchase_dates = purchase_future.result()
     except Exception as e:
         click.echo(f"  Robinhood error: {e}", err=True)
         sys.exit(1)
@@ -442,6 +461,7 @@ def advise_cmd(portfolio: str | None, discoveries: int, fmt: str):
                         "delta_sortino_if_removed": r["delta_sortino"],
                         "signal": _trim_signal(r),
                         "in_target": r["ticker"] in target_tickers if portfolio else None,
+                        **_tax_fields(purchase_dates.get(r["ticker"], {})),
                     }
                     for r in trim_scores
                 ],
@@ -476,8 +496,9 @@ def advise_cmd(portfolio: str | None, discoveries: int, fmt: str):
     trim_rows = []
     for r in trim_scores:
         signal = _trim_signal(r)
-        in_target = "✓" if r["ticker"] in target_tickers else ("" if portfolio else "")
         drift_flag = "" if not portfolio else ("" if r["ticker"] in target_tickers else " ← not in target")
+        pd_info = purchase_dates.get(r["ticker"], {})
+        tax = _tax_fields(pd_info)
         trim_rows.append([
             r["ticker"] + drift_flag,
             f"{r['weight']:.1%}",
@@ -489,12 +510,13 @@ def advise_cmd(portfolio: str | None, discoveries: int, fmt: str):
             _fmt_delta(r["delta_sharpe"]),
             _fmt_delta(r["delta_sortino"]),
             signal,
+            tax["tax_status"] or "—",
         ])
 
     click.echo(tabulate(
         trim_rows,
         headers=["Ticker", "Weight", "Value", "G/L", "Sharpe", "Sortino",
-                 "Max DD", "ΔSharpe↑", "ΔSortino↑", "Signal"],
+                 "Max DD", "ΔSharpe↑", "ΔSortino↑", "Signal", "Tax"],
         tablefmt="simple",
     ))
     click.echo("  ΔSharpe↑ / ΔSortino↑: positive = portfolio improves if removed.")
