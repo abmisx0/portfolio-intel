@@ -14,10 +14,9 @@ from tabulate import tabulate
 from cli.formatters import build_envelope, print_json
 from core.broker import login, get_account_data, get_watchlist
 from core.data_fetcher import get_close_series, prefetch_prices
-from core.analytics import _get_rfr
+from core.analytics import TRADING_DAYS, _get_rfr
 from config import PORTFOLIOS
 
-TRADING_DAYS = 252
 LOOKBACK_DAYS = 365 * 3
 CANDIDATE_ALLOCATION = 0.05
 MIN_HISTORY_DAYS = 252

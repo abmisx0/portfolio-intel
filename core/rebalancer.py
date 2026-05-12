@@ -22,6 +22,8 @@ from core.data_fetcher import get_close_series
 
 logger = logging.getLogger(__name__)
 
+_DRIFT_THRESHOLD = 0.001
+
 
 def _latest_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
     """Return (price, date_str) from the latest cached close for a ticker."""
@@ -85,11 +87,18 @@ def compute_rebalance(
             curr_dollars = curr_w * total_value
             trade_dollars = drift * total_value
 
+            if drift > _DRIFT_THRESHOLD:
+                direction = "BUY"
+            elif drift < -_DRIFT_THRESHOLD:
+                direction = "SELL"
+            else:
+                direction = "HOLD"
+
             row.update({
                 "current_weight": round(curr_w, 6),
                 "current_dollars": round(curr_dollars, 2),
                 "drift": round(drift, 6),
-                "trade_direction": "BUY" if drift > 0.001 else ("SELL" if drift < -0.001 else "HOLD"),
+                "trade_direction": direction,
                 "trade_dollars": round(abs(trade_dollars), 2),
                 "trade_shares": round(abs(trade_dollars) / price, 2) if price and abs(trade_dollars) > 0 else 0.0,
             })

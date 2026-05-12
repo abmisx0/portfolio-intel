@@ -243,22 +243,26 @@ def portfolio_holdings_table(
     """
     positions = portfolio_override or PORTFOLIOS.get(portfolio_name, [])
 
-    # Build name map from live holdings (same source used for aggregation)
     name_map: Dict[str, str] = {}
+    aggregated: Dict[str, float] = {}
     for pos in positions:
-        for h in get_etf_holdings(pos["ticker"].upper()):
+        ticker = pos["ticker"].upper()
+        etf_alloc = float(pos["weight"])
+        etf_holdings = get_etf_holdings(ticker)
+        if not etf_holdings:
+            logger.warning("No holdings for %s — skipping in aggregation", ticker)
+            continue
+        for h in etf_holdings:
             sym = _normalise_symbol(h.get("symbol", ""))
-            if sym and h.get("name"):
+            if not sym:
+                continue
+            if h.get("name"):
                 name_map[sym] = h["name"]
+            aggregated[sym] = aggregated.get(sym, 0.0) + etf_alloc * float(h.get("weight", 0))
 
-    aggregated = aggregate_portfolio_holdings(portfolio_name, portfolio_override)
+    aggregated = dict(sorted(aggregated.items(), key=lambda x: x[1], reverse=True))
 
-    result = []
-    for sym, w in list(aggregated.items())[:top_n]:
-        result.append({
-            "symbol": sym,
-            "effective_weight": round(w, 6),
-            "name": name_map.get(sym, ""),
-        })
-
-    return result
+    return [
+        {"symbol": sym, "effective_weight": round(w, 6), "name": name_map.get(sym, "")}
+        for sym, w in list(aggregated.items())[:top_n]
+    ]
