@@ -17,15 +17,15 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
-from typing import Dict, List, Optional
+from typing import Optional
 
 import pandas as pd
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import PORTFOLIOS, RISK_FREE_RATE, BENCHMARK_TICKER, BENCHMARK_SPX
-from core.data_fetcher import get_close_series
+from config import PORTFOLIOS, RISK_FREE_RATE, BENCHMARK_TICKER, BENCHMARKS, resolve_portfolio
+from core.data_fetcher import get_close_series, prefetch_prices
 from core.analytics import (
     compute_metrics,
     _round,
@@ -39,7 +39,7 @@ ROLLING_WINDOW_DAYS = 252  # ~12 months of trading days
 # ── Portfolio daily return series ─────────────────────────────────────────────
 
 def _build_portfolio_series(
-    positions: List[Dict],
+    positions: list[dict],
     start: date,
     end: date,
 ) -> pd.Series:
@@ -50,8 +50,8 @@ def _build_portfolio_series(
     Weights are normalised across tickers that have data in the period.
     Returns a pd.Series indexed by date.
     """
-    price_data: Dict[str, pd.Series] = {}
-    weights: Dict[str, float] = {}
+    price_data: dict[str, pd.Series] = {}
+    weights: dict[str, float] = {}
 
     for pos in positions:
         ticker = pos["ticker"].upper()
@@ -91,7 +91,7 @@ def _build_portfolio_series(
 
 # ── Calendar year returns ─────────────────────────────────────────────────────
 
-def _calendar_year_returns(price_index: pd.Series) -> Dict[str, float]:
+def _calendar_year_returns(price_index: pd.Series) -> dict[str, float]:
     """
     Given a cumulative price-index series, compute calendar year returns.
     Returns {year_str: return_float} e.g. {"2021": 0.182, "2022": -0.143}.
@@ -111,7 +111,7 @@ def _rolling_returns(
     price_index: pd.Series,
     window: int = ROLLING_WINDOW_DAYS,
     sample_freq: int = 21,  # monthly sample to keep output manageable
-) -> List[Dict]:
+) -> list[dict]:
     """
     Rolling window return series, sampled every `sample_freq` trading days.
     Returns [{date, return}].
@@ -131,7 +131,7 @@ def _rolling_returns(
 
 # ── Metrics bundle for a price-index series ───────────────────────────────────
 
-def _portfolio_metrics(price_index: pd.Series, label: str) -> Dict:
+def _portfolio_metrics(price_index: pd.Series, label: str) -> dict:
     """Compute all standard metrics from a cumulative price-index series."""
     return compute_metrics(price_index, rfr=RISK_FREE_RATE, label=label)
 
@@ -145,9 +145,9 @@ def backtest(
     end: Optional[date | str] = None,
     include_benchmark: bool = True,
     benchmark: str = "voo",
-    portfolio_a_override: Optional[List[Dict]] = None,
-    portfolio_b_override: Optional[List[Dict]] = None,
-) -> Dict:
+    portfolio_a_override: Optional[list[dict]] = None,
+    portfolio_b_override: Optional[list[dict]] = None,
+) -> dict:
     """
     Compare two portfolio allocations over a historical period.
 
@@ -170,8 +170,8 @@ def backtest(
     elif isinstance(end, str):
         end = date.fromisoformat(end)
 
-    positions_a = portfolio_a_override or PORTFOLIOS.get(portfolio_a)
-    positions_b = portfolio_b_override or PORTFOLIOS.get(portfolio_b)
+    positions_a = portfolio_a_override or resolve_portfolio(portfolio_a)
+    positions_b = portfolio_b_override or resolve_portfolio(portfolio_b)
 
     if not positions_a:
         raise ValueError(f"Portfolio '{portfolio_a}' not found")
@@ -179,6 +179,13 @@ def backtest(
         raise ValueError(f"Portfolio '{portfolio_b}' not found")
 
     logger.info("Backtesting %s vs %s from %s to %s", portfolio_a, portfolio_b, start, end)
+
+    bm_short = benchmark.upper()
+    bm_ticker = BENCHMARKS.get(benchmark.lower(), BENCHMARK_TICKER)
+    all_tickers = list({pos["ticker"].upper() for positions in (positions_a, positions_b) for pos in positions})
+    if include_benchmark:
+        all_tickers.append(bm_ticker)
+    prefetch_prices(all_tickers, start, end)
 
     # Build price-index series for each portfolio
     idx_a = _build_portfolio_series(positions_a, start, end)
@@ -193,7 +200,7 @@ def backtest(
     idx_a = idx_a / idx_a.iloc[0]
     idx_b = idx_b / idx_b.iloc[0]
 
-    result: Dict = {
+    result: dict = {
         "portfolio_a": portfolio_a,
         "portfolio_b": portfolio_b,
         "start_date": start.isoformat(),
@@ -202,7 +209,7 @@ def backtest(
         "actual_end": idx_a.index[-1].strftime("%Y-%m-%d"),
     }
 
-    def _build_result(label: str, idx: pd.Series) -> Dict:
+    def _build_result(label: str, idx: pd.Series) -> dict:
         return {
             "metrics": _portfolio_metrics(idx, label),
             "calendar_year_returns": _calendar_year_returns(idx),
@@ -213,11 +220,9 @@ def backtest(
     result[portfolio_a] = _build_result(portfolio_a, idx_a)
     result[portfolio_b] = _build_result(portfolio_b, idx_b)
 
-    bm_short = benchmark.upper()   # "VOO" or "SPX" — single source of truth
-    bm_key   = f"benchmark_{bm_short}"
+    bm_key = f"benchmark_{bm_short}"
 
     if include_benchmark:
-        bm_ticker = BENCHMARK_SPX if bm_short == "SPX" else BENCHMARK_TICKER
         bm_series = get_close_series(bm_ticker, start=start, end=end)
         bm_common = bm_series.loc[bm_series.index.intersection(common_dates)]
         if not bm_common.empty:
@@ -236,7 +241,7 @@ def backtest(
     return result
 
 
-def _sample_series(price_index: pd.Series, sample_freq: int = 5) -> List[Dict]:
+def _sample_series(price_index: pd.Series, sample_freq: int = 5) -> list[dict]:
     """Sample a price-index series weekly (every 5 trading days) for JSON output."""
     sampled = price_index.iloc[::sample_freq]
     return [
@@ -248,11 +253,11 @@ def _sample_series(price_index: pd.Series, sample_freq: int = 5) -> List[Dict]:
 def _comparison_summary(
     label_a: str,
     label_b: str,
-    m_a: Dict,
-    m_b: Dict,
-    m_bm: Optional[Dict],
+    m_a: dict,
+    m_b: dict,
+    m_bm: dict | None,
     bm_short: str = "VOO",
-) -> Dict:
+) -> dict:
     """Produce a head-to-head metrics diff between portfolio A and B."""
     def _diff(key):
         va = m_a.get(key)

@@ -11,12 +11,12 @@ from core.rebalancer import compute_rebalance, parse_current_weights
 
 
 @click.command()
-@click.option("--portfolio", default="proposed", show_default=True,
-              help="Target portfolio (proposed|previous)")
+@click.option("--portfolio", default="core_satellite", show_default=True,
+              help="Target portfolio name from config.py.")
 @click.option("--value", default=None, type=float,
               help="Total portfolio value in dollars. Auto-fetched from Robinhood if --from-robinhood.")
 @click.option("--current", default=None,
-              help="Current allocations as 'VOO:0.32,NLR:0.13,...' (optional; triggers drift analysis)")
+              help="Current allocations as 'VOO:0.48,QQQ:0.22,...' (optional; triggers drift analysis)")
 @click.option("--from-robinhood", "from_robinhood", is_flag=True, default=False,
               help="Fetch current positions and portfolio value live from Robinhood.")
 @click.option("--format", "fmt", default="table", show_default=True,

@@ -17,7 +17,7 @@ from typing import Dict, List, Optional
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import PORTFOLIOS
+from config import PORTFOLIOS, resolve_portfolio
 from core.data_fetcher import get_close_series
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ def compute_rebalance(
 
     Returns a structured dict with per-position plan + summary.
     """
-    positions = portfolio_override or PORTFOLIOS.get(portfolio_name)
+    positions = portfolio_override or resolve_portfolio(portfolio_name)
     if not positions:
         raise ValueError(f"Portfolio '{portfolio_name}' not found")
 
@@ -141,7 +141,7 @@ def compute_rebalance(
 
 def parse_current_weights(weights_str: str) -> Dict[str, float]:
     """
-    Parse a compact weight string: 'VOO:0.32,NLR:0.13,SMH:0.14'
+    Parse a compact weight string: 'VOO:0.50,QQQ:0.30,GLD:0.20'
     Returns {ticker: weight}.
     """
     result = {}

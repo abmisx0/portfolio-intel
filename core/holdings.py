@@ -26,7 +26,7 @@ from typing import Dict, List, Optional, Tuple
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import PORTFOLIOS
+from config import PORTFOLIOS, resolve_portfolio
 from core.data_fetcher import get_holdings
 
 logger = logging.getLogger(__name__)
@@ -46,14 +46,51 @@ def _load_seed() -> dict:
     return _seed_cache
 
 
+# Set after the first 403 so a free-tier Finnhub key doesn't pay a failed
+# HTTP round-trip per ticker for the rest of the process.
+_finnhub_unavailable = False
+
+
+def _finnhub_full_holdings(ticker: str) -> List[Dict]:
+    """Full ETF constituents via Finnhub (paid endpoint). [] when unavailable.
+
+    yfinance only exposes the top 10 holdings, which systematically understates
+    overlap and effective-concentration math — full constituents are strictly
+    better whenever the API plan allows it.
+    """
+    global _finnhub_unavailable
+    from config import FINNHUB_API_KEY
+    if not FINNHUB_API_KEY or _finnhub_unavailable:
+        return []
+    try:
+        from core.finnhub import get_etf_holdings as fh_etf_holdings
+        raw = fh_etf_holdings(ticker)
+        return [
+            {"symbol": h["symbol"], "weight": float(h["pct"]) / 100, "name": h.get("name") or h["symbol"]}
+            for h in raw
+            if h.get("symbol") and h.get("pct")
+        ]
+    except PermissionError:
+        logger.info("Finnhub ETF holdings requires a paid plan — using yfinance top-10")
+        _finnhub_unavailable = True
+        return []
+    except Exception as exc:
+        logger.debug("Finnhub holdings failed for %s: %s", ticker, exc)
+        return []
+
+
 def get_etf_holdings(ticker: str) -> List[Dict]:
     """
-    Return top holdings for an ETF as [{symbol, weight, name}].
+    Return holdings for an ETF as [{symbol, weight, name}].
 
-    Tries yfinance (cached), falls back to seed data.
+    Data priority: Finnhub full constituents (when key/plan allows) →
+    yfinance top-10 (cached) → seed data.
     """
     ticker = ticker.upper()
-    holdings = get_holdings(ticker)
+    holdings = _finnhub_full_holdings(ticker)
+
+    if not holdings:
+        holdings = get_holdings(ticker)
 
     if not holdings:
         seed = _load_seed()
@@ -86,7 +123,7 @@ def aggregate_portfolio_holdings(
 
     portfolio_override: pass a list of {ticker, weight} to use instead of config.
     """
-    positions = portfolio_override or PORTFOLIOS.get(portfolio_name, [])
+    positions = portfolio_override or resolve_portfolio(portfolio_name)
     if not positions:
         raise ValueError(f"Portfolio '{portfolio_name}' not found")
 
@@ -119,6 +156,7 @@ def overlap_analysis(
     candidate_ticker: str,
     portfolio_name: str,
     portfolio_override: Optional[List[Dict]] = None,
+    portfolio_map: Optional[Dict[str, float]] = None,
 ) -> Dict:
     """
     Compute overlap between a candidate ETF and an existing portfolio.
@@ -132,7 +170,8 @@ def overlap_analysis(
     candidate_ticker = candidate_ticker.upper()
     candidate_holdings_raw = get_etf_holdings(candidate_ticker)
     candidate_map = {_normalise_symbol(h["symbol"]): h for h in candidate_holdings_raw}
-    portfolio_map = aggregate_portfolio_holdings(portfolio_name, portfolio_override)
+    if portfolio_map is None:
+        portfolio_map = aggregate_portfolio_holdings(portfolio_name, portfolio_override)
 
     shared = []
     overlap_sum = 0.0
@@ -179,6 +218,7 @@ def effective_concentration(
     candidate_allocation: float,
     top_n: int = 10,
     portfolio_override: Optional[List[Dict]] = None,
+    portfolio_map: Optional[Dict[str, float]] = None,
 ) -> Dict:
     """
     Compute effective single-stock concentration if candidate is added at
@@ -195,7 +235,8 @@ def effective_concentration(
     candidate_ticker = candidate_ticker.upper()
 
     # Scale existing portfolio
-    existing = aggregate_portfolio_holdings(portfolio_name, portfolio_override)
+    existing = portfolio_map if portfolio_map is not None \
+        else aggregate_portfolio_holdings(portfolio_name, portfolio_override)
     scale = 1.0 - candidate_allocation
     scaled_existing: Dict[str, float] = {sym: w * scale for sym, w in existing.items()}
 
@@ -241,7 +282,7 @@ def portfolio_holdings_table(
 
     Returns [{symbol, effective_weight, name}].
     """
-    positions = portfolio_override or PORTFOLIOS.get(portfolio_name, [])
+    positions = portfolio_override or resolve_portfolio(portfolio_name)
 
     name_map: Dict[str, str] = {}
     aggregated: Dict[str, float] = {}

@@ -207,7 +207,19 @@ def optimize(
         if best is None or res.fun < best.fun:
             best = res
 
-    opt_w = np.clip(best.x, 0.0, 1.0)
+    # Clip to the per-ticker bounds (not just [0,1]) and renormalise. A single
+    # clip-then-normalise can push a capped ticker back above its bound, so
+    # iterate — converges in 2–3 passes for any realistic constraint set.
+    lo_arr = np.array([b[0] for b in bounds])
+    hi_arr = np.array([b[1] for b in bounds])
+    opt_w = best.x
+    for _ in range(5):
+        opt_w = np.clip(opt_w, lo_arr, hi_arr)
+        s = opt_w.sum()
+        if s <= 0 or abs(s - 1.0) < 1e-9:
+            break
+        opt_w = opt_w / s
+    opt_w = np.clip(opt_w, lo_arr, hi_arr)
     opt_w /= opt_w.sum()
     optimal_weights = {t: _round(float(w), 6) for t, w in zip(usable, opt_w)}
 

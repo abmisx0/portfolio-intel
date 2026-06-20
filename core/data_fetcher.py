@@ -72,6 +72,14 @@ CREATE TABLE IF NOT EXISTS etf_info (
     payload     TEXT    NOT NULL,
     PRIMARY KEY (ticker, fetch_date)
 );
+
+CREATE TABLE IF NOT EXISTS missing_ranges (
+    ticker      TEXT    NOT NULL,
+    start       TEXT    NOT NULL,
+    end         TEXT    NOT NULL,
+    logged      TEXT    NOT NULL,
+    PRIMARY KEY (ticker, start, end)
+);
 """
 
 
@@ -190,6 +198,30 @@ def _fetch_stooq(ticker: str, start: date, end: date) -> "pd.DataFrame":
         return pd.DataFrame()
 
 
+# ── Known-missing ranges (negative cache) ──────────────────────────────────────
+# Pre-listing history never materialises, but without a record of the empty
+# answer every advise/screen run re-asked both providers for the same range.
+
+def _is_known_missing(conn: sqlite3.Connection, ticker: str, start: date, end: date) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM missing_ranges WHERE ticker = ? AND start <= ? AND end >= ? LIMIT 1",
+        (ticker, start.isoformat(), end.isoformat()),
+    ).fetchone()
+    return row is not None
+
+
+def _record_missing(conn: sqlite3.Connection, ticker: str, start: date, end: date) -> None:
+    # Only ranges that end well in the past are safely "never coming" — a gap
+    # ending near today may just be data not yet published.
+    if (date.today() - end).days < 7:
+        return
+    conn.execute(
+        "INSERT OR REPLACE INTO missing_ranges (ticker, start, end, logged) VALUES (?,?,?,?)",
+        (ticker, start.isoformat(), end.isoformat(), date.today().isoformat()),
+    )
+    conn.commit()
+
+
 # ── Price Fetching ─────────────────────────────────────────────────────────────
 
 def _cached_date_range(conn: sqlite3.Connection, ticker: str) -> Tuple[Optional[date], Optional[date]]:
@@ -203,17 +235,27 @@ def _cached_date_range(conn: sqlite3.Connection, ticker: str) -> Tuple[Optional[
 
 
 def _insert_prices(conn: sqlite3.Connection, ticker: str, df: pd.DataFrame) -> int:
-    """Insert price rows from a yfinance OHLCV DataFrame. Returns inserted count."""
+    """Insert price rows from a yfinance OHLCV DataFrame. Returns inserted count.
+
+    Close-only sources (batch prefetch, stooq edge cases) leave OHLC/volume as
+    NULL — never a fabricated 0 that downstream consumers could mistake for data.
+    """
     if df is None or df.empty:
         return 0
 
-    df = df.reindex(columns=["Open", "High", "Low", "Close", "Volume"]).fillna(0)
+    df = df.reindex(columns=["Open", "High", "Low", "Close", "Volume"]).dropna(subset=["Close"])
+    if df.empty:
+        return 0
     dates = [
         (idx.date() if hasattr(idx, "date") else date.fromisoformat(str(idx)[:10])).isoformat()
         for idx in df.index
     ]
+
+    def _f(v):
+        return float(v) if pd.notna(v) else None
+
     rows = [
-        (ticker, d, float(o), float(h), float(l), float(c), float(c), int(v))
+        (ticker, d, _f(o), _f(h), _f(l), float(c), float(c), int(v) if pd.notna(v) else None)
         for d, (o, h, l, c, v) in zip(dates, df.values)
     ]
 
@@ -272,6 +314,13 @@ def get_prices(
                 )
                 continue
 
+            # Known-missing range (pre-listing history etc.) — don't re-ask providers
+            # on every run; the answer was permanently empty last time.
+            if _is_known_missing(conn, ticker, fetch_start, fetch_end):
+                logger.debug("Skipping %s [%s→%s]: known-missing range",
+                             ticker, fetch_start, fetch_end)
+                continue
+
             logger.info("Fetching %s from %s to %s", ticker, fetch_start, fetch_end)
             raw = _yf_download(
                 ticker,
@@ -292,6 +341,7 @@ def get_prices(
                     "No price data for %s [%s→%s] from any provider (window=%dd)",
                     ticker, fetch_start, fetch_end, window_days,
                 )
+                _record_missing(conn, ticker, fetch_start, fetch_end)
 
             if not raw.empty:
                 if isinstance(raw.columns, pd.MultiIndex):
@@ -386,51 +436,19 @@ def prefetch_prices(tickers: List[str], start: date, end: date) -> None:
             series = close_all[ticker].dropna()
             if series.empty:
                 continue
+            # Close-only: do NOT fabricate OHLC by duplicating close (would masquerade
+            # as real intraday data). _insert_prices stores absent OHLC/volume as NULL.
             df = series.rename("Close").to_frame()
             df.index = pd.to_datetime(df.index)
-            full_df = pd.DataFrame({
-                "Open": df["Close"], "High": df["Close"],
-                "Low": df["Close"], "Close": df["Close"], "Volume": 0,
-            })
-            _insert_prices(conn, str(ticker), full_df)
+            _insert_prices(conn, str(ticker), df)
 
 
 # ── Shared cache helper ────────────────────────────────────────────────────────
 
 def _yf_cached(table: str, ticker: str, fetch_fn):
-    """
-    Read JSON payload from a SQLite cache table or call fetch_fn on miss.
-
-    TTL is HOLDINGS_CACHE_TTL_DAYS. The read and write each use a separate
-    connection so the network call in fetch_fn is never made while a DB
-    connection is held open.
-    """
-    today = date.today()
-    cutoff = (today - timedelta(days=HOLDINGS_CACHE_TTL_DAYS)).isoformat()
-
-    with _db() as conn:
-        row = conn.execute(
-            f"SELECT payload FROM {table}"                    # nosec: table is internal constant
-            " WHERE ticker = ? AND fetch_date >= ?"
-            " ORDER BY fetch_date DESC LIMIT 1",
-            (ticker, cutoff),
-        ).fetchone()
-
-    if row:
-        logger.debug("Cache hit: %s/%s", table, ticker)
-        return json.loads(row["payload"])
-
-    logger.info("Fetching %s for %s", table, ticker)
-    result = fetch_fn(ticker)
-
-    with _db() as conn:
-        conn.execute(
-            f"INSERT OR REPLACE INTO {table} (ticker, fetch_date, payload) VALUES (?, ?, ?)",  # nosec
-            (ticker, today.isoformat(), json.dumps(result)),
-        )
-        conn.commit()
-
-    return result
+    """JSON cache read-through, TTL = HOLDINGS_CACHE_TTL_DAYS. See core.cache."""
+    from core.cache import cached_json
+    return cached_json(table, ticker, fetch_fn, ttl_days=HOLDINGS_CACHE_TTL_DAYS)
 
 
 # ── Holdings Fetching ──────────────────────────────────────────────────────────
@@ -535,14 +553,28 @@ def get_etf_info(ticker: str) -> dict:
 
 
 def _fetch_etf_info_yf(ticker: str) -> dict:
-    """Fetch ETF metadata from yfinance. Returns {} on failure."""
+    """Fetch ETF metadata from yfinance. Returns {} on failure.
+
+    Unit normalisation: yfinance returns fund `yield` as a fraction (0.0779)
+    but stock `dividendYield` and `netExpenseRatio` in percent (6.71, 0.35).
+    Everything stored here is a fraction so formatters can multiply by 100 once.
+    """
     try:
         info = yf.Ticker(ticker).info or {}
+
+        dy = info.get("yield")
+        if dy is None and info.get("dividendYield") is not None:
+            dy = float(info["dividendYield"]) / 100
+
+        er = info.get("annualReportExpenseRatio") or info.get("expenseRatio")
+        if er is None and info.get("netExpenseRatio") is not None:
+            er = float(info["netExpenseRatio"]) / 100
+
         return {
             "name": info.get("longName") or info.get("shortName", ticker),
-            "expense_ratio": info.get("annualReportExpenseRatio") or info.get("expenseRatio"),
+            "expense_ratio": er,
             "aum": info.get("totalAssets"),
-            "dividend_yield": info.get("yield") or info.get("dividendYield"),
+            "dividend_yield": dy,
             "category": info.get("category"),
             "fund_family": info.get("fundFamily"),
         }

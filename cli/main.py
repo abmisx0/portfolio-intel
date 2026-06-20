@@ -2,9 +2,9 @@
 Portfolio Intelligence CLI entry point.
 
 Usage:
-  python -m cli screen XLE --portfolio proposed --format json
-  python -m cli compare LIT COPX --format table
-  python -m cli holdings --portfolio proposed --top 20 --format table
+  python -m cli screen QQQ --portfolio core_satellite --format json
+  python -m cli compare QQQ SPY --format table
+  python -m cli holdings --portfolio thematic --top 20 --format table
 """
 from __future__ import annotations
 
@@ -25,7 +25,17 @@ from cli.commands.rebalance import rebalance_cmd
 from cli.commands.alerts import alerts_cmd
 from cli.commands.optimize import optimize_cmd
 from cli.commands.positions import positions_cmd
+from cli.commands.performance import performance_cmd
+from cli.commands.exposure import exposure_cmd
 from cli.commands.advise import advise_cmd
+from cli.commands.analysts import analysts_cmd
+from cli.commands.valuation import valuation_cmd
+from cli.commands.technicals import technicals_cmd
+from cli.commands.macro import macro_cmd
+from cli.commands.publish import publish_cmd
+from cli.commands.insider import insider_cmd
+from cli.commands.news import news_cmd
+from cli.commands.earnings import earnings_cmd
 
 
 @click.group()
@@ -45,7 +55,17 @@ cli.add_command(rebalance_cmd, name="rebalance")
 cli.add_command(alerts_cmd, name="alerts")
 cli.add_command(optimize_cmd, name="optimize")
 cli.add_command(positions_cmd, name="positions")
+cli.add_command(performance_cmd, name="performance")
+cli.add_command(exposure_cmd, name="exposure")
 cli.add_command(advise_cmd, name="advise")
+cli.add_command(analysts_cmd, name="analysts")
+cli.add_command(valuation_cmd, name="valuation")
+cli.add_command(technicals_cmd, name="technicals")
+cli.add_command(macro_cmd, name="macro")
+cli.add_command(publish_cmd, name="publish")
+cli.add_command(insider_cmd, name="insider")
+cli.add_command(news_cmd, name="news")
+cli.add_command(earnings_cmd, name="earnings")
 
 
 @cli.command()

@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import click
 
 from cli.formatters import build_envelope, print_json, print_analytics_table
-from config import PORTFOLIOS, LOOKBACK_5Y, BENCHMARK_TICKER
+from config import LOOKBACK_ALL, BENCHMARK_TICKER, resolve_portfolio
 from core.data_fetcher import get_close_series, price_map_freshness
 from core.analytics import (
     portfolio_position_metrics,
@@ -16,14 +16,19 @@ from core.analytics import (
 )
 from core.holdings import portfolio_holdings_table
 
-_5Y_START = LOOKBACK_5Y
+_5Y_START = LOOKBACK_ALL  # fetch full ~10Y history so 1Y/3Y/5Y/10Y windows all resolve
 BENCHMARK = BENCHMARK_TICKER
 
 
-def run_analytics(portfolio_name: str) -> dict:
-    positions = PORTFOLIOS.get(portfolio_name)
-    if not positions:
-        raise ValueError(f"Portfolio '{portfolio_name}' not found")
+def run_analytics(portfolio_name: str, delta_adjusted: bool = False) -> dict:
+    if delta_adjusted:
+        from core.exposure import delta_adjusted_positions
+        positions = delta_adjusted_positions()
+    else:
+        try:
+            positions = resolve_portfolio(portfolio_name)
+        except ValueError as e:
+            raise click.UsageError(str(e))
 
     # Fetch all price series
     price_map = {}
@@ -41,8 +46,8 @@ def run_analytics(portfolio_name: str) -> dict:
     # Theme attribution (trailing 1Y = 252 trading days)
     themes = theme_attribution(positions, price_map, trailing_days=252)
 
-    # Top stock exposures
-    top_holdings = portfolio_holdings_table(portfolio_name, top_n=20)
+    # Top stock exposures (reuse resolved positions to avoid a second live fetch)
+    top_holdings = portfolio_holdings_table(portfolio_name, top_n=20, portfolio_override=positions)
 
     # Portfolio-level metrics (build weighted return series)
     weights = {pos["ticker"].upper(): pos["weight"] for pos in positions}
@@ -67,16 +72,23 @@ def run_analytics(portfolio_name: str) -> dict:
 
 
 @click.command()
-@click.option("--portfolio", default="proposed", show_default=True,
-              help="Portfolio name (proposed|previous)")
+@click.option("--portfolio", default="live", show_default=True,
+              help="Portfolio name from config.py, or 'live' for current Robinhood holdings.")
+@click.option("--delta-adjusted", "-d", is_flag=True, default=False,
+              help="Use delta-adjusted economic weights (folds in option exposure). Live book only.")
 @click.option("--format", "fmt", default="table", show_default=True,
               type=click.Choice(["json", "table"]), help="Output format")
-def analytics_cmd(portfolio: str, fmt: str):
+def analytics_cmd(portfolio: str, delta_adjusted: bool, fmt: str):
     """Portfolio-level analytics: per-position metrics, theme attribution, top exposures."""
-    data = run_analytics(portfolio)
+    if delta_adjusted and portfolio != "live":
+        raise click.UsageError(
+            "--delta-adjusted analyzes the live Robinhood book; "
+            "drop --portfolio or pass --portfolio live."
+        )
+    data = run_analytics(portfolio, delta_adjusted=delta_adjusted)
     envelope = build_envelope(
         command="analytics",
-        args={"portfolio": portfolio},
+        args={"portfolio": portfolio, "delta_adjusted": delta_adjusted},
         data=data,
         data_freshness=data.get("data_freshness"),
     )

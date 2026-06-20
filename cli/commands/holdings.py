@@ -10,8 +10,8 @@ from core.holdings import portfolio_holdings_table
 
 
 @click.command()
-@click.option("--portfolio", default="proposed", show_default=True,
-              help="Portfolio name (proposed|previous)")
+@click.option("--portfolio", default="live", show_default=True,
+              help="Portfolio name from config.py, or 'live' for current Robinhood holdings.")
 @click.option("--top", default=20, show_default=True, type=int,
               help="Number of top holdings to return")
 @click.option("--format", "fmt", default="table", show_default=True,

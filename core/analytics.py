@@ -33,20 +33,12 @@ def daily_returns(prices: pd.Series) -> pd.Series:
 
 def annualized_return(prices: pd.Series) -> float:
     """Compound annualized return over the full series."""
-    r = daily_returns(prices)
-    if r.empty:
-        return float("nan")
-    n_years = len(r) / TRADING_DAYS
-    total = (1 + r).prod()
-    return float(total ** (1 / n_years) - 1)
+    return ann_return_from_returns(daily_returns(prices))
 
 
 def annualized_volatility(prices: pd.Series) -> float:
     """Annualized standard deviation of daily returns."""
-    r = daily_returns(prices)
-    if r.empty:
-        return float("nan")
-    return float(r.std() * np.sqrt(TRADING_DAYS))
+    return ann_vol_from_returns(daily_returns(prices))
 
 
 def sharpe_ratio(prices: pd.Series, rfr: Optional[float] = None) -> float:
@@ -115,6 +107,55 @@ def correlation(prices_a: pd.Series, prices_b: pd.Series) -> float:
     return float(aligned.corr().iloc[0, 1])
 
 
+# ── Return-based primitives (canonical; for callers holding a returns series) ────
+# These exist so commands that already have a daily-returns series (e.g. portfolio
+# simulations in advise) use the SAME geometric definitions as the price-based
+# functions above — avoiding the arithmetic-mean drift that made commands disagree.
+
+def ann_return_from_returns(r: pd.Series) -> float:
+    """Geometric (compound) annualized return from a daily-returns series."""
+    if r is None or r.empty:
+        return float("nan")
+    n_years = len(r) / TRADING_DAYS
+    return float((1 + r).prod() ** (1 / n_years) - 1) if n_years > 0 else float("nan")
+
+
+def ann_vol_from_returns(r: pd.Series) -> float:
+    if r is None or r.empty:
+        return float("nan")
+    return float(r.std() * np.sqrt(TRADING_DAYS))
+
+
+def sharpe_from_returns(r: pd.Series, rfr: Optional[float] = None) -> float:
+    if rfr is None:
+        rfr = _get_rfr()
+    vol = ann_vol_from_returns(r)
+    if not vol or np.isnan(vol):
+        return float("nan")
+    return (ann_return_from_returns(r) - rfr) / vol
+
+
+def sortino_from_returns(r: pd.Series, rfr: Optional[float] = None) -> float:
+    if rfr is None:
+        rfr = _get_rfr()
+    if r is None or r.empty:
+        return float("nan")
+    downside = r[r < 0]
+    if downside.empty:
+        return float("inf")
+    dd = float(downside.std() * np.sqrt(TRADING_DAYS))
+    if dd == 0:
+        return float("nan")
+    return (ann_return_from_returns(r) - rfr) / dd
+
+
+def max_drawdown_from_returns(r: pd.Series) -> float:
+    if r is None or r.empty:
+        return float("nan")
+    cum = (1 + r).cumprod()
+    return float(((cum - cum.cummax()) / cum.cummax()).min())
+
+
 # ── Full metrics bundle ────────────────────────────────────────────────────────
 
 def compute_metrics(
@@ -174,7 +215,35 @@ def compute_metrics(
 
 # ── Trailing return windows ────────────────────────────────────────────────────
 
-_WINDOWS_DAYS = {"1M": 30, "3M": 91, "6M": 182, "1Y": 365, "3Y": 365*3, "5Y": 365*5}
+_WINDOWS_DAYS = {"1M": 30, "3M": 91, "6M": 182, "1Y": 365, "3Y": 365*3, "5Y": 365*5, "10Y": 365*10}
+
+# Trailing-window lengths in trading days, for risk-adjusted multi-window comparison.
+_MULTI_WINDOWS = {"1Y": TRADING_DAYS, "3Y": TRADING_DAYS*3, "5Y": TRADING_DAYS*5, "10Y": TRADING_DAYS*10}
+
+
+def multi_window_metrics(prices: pd.Series, rfr: Optional[float] = None) -> dict:
+    """
+    Annualized return + Sharpe over trailing 1Y/3Y/5Y/10Y windows.
+
+    Lets a single position be judged for *consistency* rather than one lookback —
+    a name that only looks good (or bad) in one window is flagged by the spread.
+    Windows longer than the available history return None.
+    Returns {window: {ann_return, sharpe, n_days} | None}.
+    """
+    if rfr is None:
+        rfr = _get_rfr()
+    r = daily_returns(prices)
+    out: dict = {}
+    for label, n in _MULTI_WINDOWS.items():
+        if len(r) < n:
+            out[label] = None
+            continue
+        wr = r.iloc[-n:]
+        ann_ret = ann_return_from_returns(wr)
+        ann_vol = ann_vol_from_returns(wr)
+        sharpe = _round((ann_ret - rfr) / ann_vol) if ann_vol and not np.isnan(ann_vol) else None
+        out[label] = {"ann_return": _round(ann_ret), "sharpe": sharpe, "n_days": int(n)}
+    return out
 
 
 def trailing_return_windows(prices: pd.Series) -> dict:
@@ -313,13 +382,10 @@ def portfolio_position_metrics(
             })
             continue
 
-        # Align benchmark to same dates as this ticker
-        bm_aligned = benchmark_series.reindex(prices.index, method="ffill").dropna()
-        prices_aligned = prices.reindex(bm_aligned.index).dropna()
-
         trailing = trailing_return_windows(prices)
         metrics = compute_metrics(prices, benchmark=benchmark_series)
         rolling = rolling_window_snapshot(prices)
+        windows = multi_window_metrics(prices)
 
         results.append({
             "ticker": ticker,
@@ -328,6 +394,7 @@ def portfolio_position_metrics(
             "trailing_returns": trailing,
             "metrics": metrics,
             "rolling": rolling,
+            "windows": windows,
         })
 
     return results

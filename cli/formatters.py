@@ -107,7 +107,7 @@ def print_screen_table(data: dict) -> None:
 
     # Trailing returns
     print(f"\n  Trailing Returns")
-    windows = ["1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y"]
+    windows = ["1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y", "10Y"]
     ret_row = [_pct(trailing.get(w)) for w in windows]
     print("  " + tabulate([ret_row], headers=windows, tablefmt="simple"))
 
@@ -219,6 +219,7 @@ def print_compare_table(data: dict) -> None:
         ["1Y Return",      _pct(_t(a, "1Y")),  _pct(_t(b, "1Y"))],
         ["3Y Return",      _pct(_t(a, "3Y")),  _pct(_t(b, "3Y"))],
         ["5Y Return",      _pct(_t(a, "5Y")),  _pct(_t(b, "5Y"))],
+        ["10Y Return",     _pct(_t(a, "10Y")), _pct(_t(b, "10Y"))],
         ["---", "---", "---"],
         ["Ann. Return",    _pct(_m(a, "annualized_return")),    _pct(_m(b, "annualized_return"))],
         ["Volatility",     _pct(_m(a, "annualized_volatility")), _pct(_m(b, "annualized_volatility"))],
@@ -288,6 +289,7 @@ def print_compare_multi_table(data: dict) -> None:
         ["1Y Return"]     + [_pct(_tr(t, "1Y")) for t in tickers],
         ["3Y Return"]     + [_pct(_tr(t, "3Y")) for t in tickers],
         ["5Y Return"]     + [_pct(_tr(t, "5Y")) for t in tickers],
+        ["10Y Return"]    + [_pct(_tr(t, "10Y")) for t in tickers],
         ["---"]           + ["---"] * len(tickers),
         ["Ann. Return"]   + [_pct(_m(t, "annualized_return")) for t in tickers],
         ["Volatility"]    + [_pct(_m(t, "annualized_volatility")) for t in tickers],
@@ -464,6 +466,22 @@ def print_analytics_table(data: dict) -> None:
                 _pct(rolling.get("1Y",  {}).get("annualized_volatility")),
             ])
         print("  " + tabulate(pos_rows, headers=hdr, tablefmt="simple"))
+
+    # Multi-window Sharpe / return (1Y / 3Y / 5Y / 10Y) — consistency check
+    if positions and any(p.get("windows") for p in positions if "error" not in p):
+        print(f"\n  Multi-Window Sharpe  (Sharpe — ann.return; '·' = insufficient history)")
+        wl = ["1Y", "3Y", "5Y", "10Y"]
+        mw_rows = []
+        for p in positions:
+            if "error" in p:
+                continue
+            w = p.get("windows") or {}
+            cells = []
+            for win in wl:
+                d = w.get(win)
+                cells.append(f"{_f2(d['sharpe'])} — {_pct(d['ann_return'])}" if d else "·")
+            mw_rows.append([p["ticker"]] + cells)
+        print("  " + tabulate(mw_rows, headers=["Ticker"] + wl, tablefmt="simple"))
 
     # Theme attribution
     if themes:

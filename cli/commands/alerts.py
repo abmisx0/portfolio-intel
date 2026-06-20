@@ -7,7 +7,7 @@ import click
 from tabulate import tabulate
 
 from cli.formatters import build_envelope, print_json
-from config import PORTFOLIOS, LOOKBACK_5Y
+from config import LOOKBACK_5Y, resolve_portfolio
 from core.data_fetcher import get_close_series
 from core.analytics import correlation_matrix
 from core.holdings import portfolio_holdings_table
@@ -17,7 +17,8 @@ _5Y_START = LOOKBACK_5Y
 
 
 @click.command()
-@click.option("--portfolio", default="proposed", show_default=True)
+@click.option("--portfolio", default="live", show_default=True,
+              help="Portfolio name from config.py, or 'live' for current Robinhood holdings.")
 @click.option("--corr-threshold", default=CORR_HIGH, show_default=True, type=float,
               help="Correlation threshold for HIGH_CORRELATION alerts")
 @click.option("--conc-threshold", default=CONCENTRATION, show_default=True, type=float,
@@ -26,7 +27,10 @@ _5Y_START = LOOKBACK_5Y
               type=click.Choice(["json", "table"]))
 def alerts_cmd(portfolio: str, corr_threshold: float, conc_threshold: float, fmt: str):
     """Check portfolio for high correlation, concentration, and theme overlap alerts."""
-    positions = PORTFOLIOS.get(portfolio, [])
+    try:
+        positions = resolve_portfolio(portfolio)
+    except ValueError as e:
+        raise click.UsageError(str(e))
 
     price_map = {}
     for pos in positions:
@@ -36,7 +40,7 @@ def alerts_cmd(portfolio: str, corr_threshold: float, conc_threshold: float, fmt
             price_map[t] = s
 
     cm = correlation_matrix(price_map)
-    top_holdings = portfolio_holdings_table(portfolio, top_n=30)
+    top_holdings = portfolio_holdings_table(portfolio, top_n=30, portfolio_override=positions)
 
     result = run_portfolio_alerts(
         positions, cm, top_holdings, corr_threshold, conc_threshold

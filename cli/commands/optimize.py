@@ -8,14 +8,14 @@ from datetime import date
 import click
 
 from cli.formatters import build_envelope, print_json, print_optimize_table
-from config import PORTFOLIOS
+from config import PORTFOLIOS, resolve_portfolio
 from core.optimizer import optimize, OBJECTIVES
 
 
 @click.command()
 @click.argument("tickers", nargs=-1, metavar="TICKER")
 @click.option("--portfolio", default=None,
-              help="Portfolio name from config (proposed|previous|v3). "
+              help="Portfolio name from config.py. "
                    "Provides tickers and current weights for comparison.")
 @click.option(
     "--objective", default="sharpe", show_default=True,
@@ -32,7 +32,7 @@ from core.optimizer import optimize, OBJECTIVES
               help="λ for quadratic-utility objective.")
 @click.option("--max-weight", "max_weight_args", multiple=True, metavar="[TICKER:]FLOAT",
               help="Global or per-ticker cap. Repeat for per-ticker: "
-                   "--max-weight 0.40 or --max-weight PPA:0.20 --max-weight NLR:0.15")
+                   "--max-weight 0.40 or --max-weight SMH:0.30 --max-weight GLD:0.15")
 @click.option("--min-weight", "min_weight_args", multiple=True, metavar="[TICKER:]FLOAT",
               help="Global or per-ticker floor. Same syntax as --max-weight.")
 @click.option("--format", "fmt", default="table", show_default=True,
@@ -53,11 +53,11 @@ def optimize_cmd(
 
     \b
     Examples:
-      optimize --portfolio v4 --objective sharpe
-      optimize VOO VGT SMH URA ITA VDE QTUM --objective sortino
-      optimize --portfolio v4 --objective min-cvar --confidence 0.95
-      optimize --portfolio v4 --objective sharpe --max-weight 0.30
-      optimize --portfolio v5 --objective sharpe --max-weight PPA:0.20 --max-weight NLR:0.15
+      optimize --portfolio thematic --objective sharpe
+      optimize VOO QQQ GLD BND VNQ --objective sortino
+      optimize --portfolio thematic --objective min-cvar --confidence 0.95
+      optimize --portfolio thematic --objective sharpe --max-weight 0.30
+      optimize --portfolio thematic --objective sharpe --max-weight SMH:0.30 --max-weight GLD:0.15
     """
     if not portfolio and not tickers:
         raise click.UsageError("Provide --portfolio or one or more TICKER arguments.")
@@ -66,11 +66,12 @@ def optimize_cmd(
 
     # Resolve tickers and current weights
     if portfolio:
-        positions = PORTFOLIOS.get(portfolio)
-        if not positions:
+        try:
+            positions = resolve_portfolio(portfolio)
+        except ValueError:
             raise click.BadParameter(
                 f"Portfolio '{portfolio}' not found. "
-                f"Valid names: {list(PORTFOLIOS.keys())}",
+                f"Valid names: {list(PORTFOLIOS.keys())} (or 'live')",
                 param_hint="--portfolio",
             )
         ticker_list = [p["ticker"] for p in positions]
@@ -85,7 +86,7 @@ def optimize_cmd(
     end_date = date.fromisoformat(end) if end else None
 
     def _parse_weight_args(args: tuple, default: float) -> tuple[float, dict]:
-        """Parse e.g. ('0.40', 'PPA:0.20', 'NLR:0.15') → (0.40, {'PPA': 0.20, 'NLR': 0.15})."""
+        """Parse e.g. ('0.40', 'SMH:0.30', 'GLD:0.15') → (0.40, {'SMH': 0.30, 'GLD': 0.15})."""
         global_val = default
         per_ticker: dict = {}
         for v in args:

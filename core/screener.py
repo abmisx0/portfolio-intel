@@ -13,15 +13,14 @@ Combines:
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
-from typing import Dict, List, Optional
+from datetime import date
 
 import pandas as pd
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import PORTFOLIOS, RISK_FREE_RATE, LOOKBACK_5Y, BENCHMARK_TICKER
-from core.data_fetcher import get_close_series, price_map_freshness, get_etf_sectors, get_etf_info
+from config import LOOKBACK_ALL, BENCHMARK_TICKER, resolve_portfolio
+from core.data_fetcher import get_close_series, prefetch_prices, price_map_freshness, get_etf_sectors, get_etf_info
 from core.analytics import (
     compute_metrics,
     trailing_return_windows,
@@ -31,6 +30,7 @@ from core.analytics import (
 )
 from core.macro import commodity_context
 from core.holdings import (
+    aggregate_portfolio_holdings,
     overlap_analysis,
     effective_concentration,
     get_etf_holdings,
@@ -38,7 +38,7 @@ from core.holdings import (
 
 logger = logging.getLogger(__name__)
 
-_5Y_START = LOOKBACK_5Y
+_5Y_START = LOOKBACK_ALL  # full ~10Y history so 10Y trailing/return windows resolve
 
 
 
@@ -46,7 +46,7 @@ _5Y_START = LOOKBACK_5Y
 
 def screen(
     candidate_ticker: str,
-    portfolio_name: str = "proposed",
+    portfolio_name: str = "live",
     candidate_allocation: float = 0.05,
 ) -> dict:
     """
@@ -55,15 +55,16 @@ def screen(
     Returns a structured dict ready for JSON serialisation.
     """
     candidate_ticker = candidate_ticker.upper()
-    positions = PORTFOLIOS.get(portfolio_name)
-    if not positions:
-        raise ValueError(f"Portfolio '{portfolio_name}' not found in config")
+    positions = resolve_portfolio(portfolio_name)
 
     # ── Fetch price data ───────────────────────────────────────────────────────
+    portfolio_tickers = [pos["ticker"].upper() for pos in positions]
+    prefetch_prices([candidate_ticker, BENCHMARK_TICKER] + portfolio_tickers, _5Y_START, date.today())
+
     candidate_series = get_close_series(candidate_ticker, start=_5Y_START)
     benchmark_series = get_close_series(BENCHMARK_TICKER, start=_5Y_START)
 
-    portfolio_series: Dict[str, pd.Series] = {}
+    portfolio_series: dict[str, pd.Series] = {}
     for pos in positions:
         t = pos["ticker"].upper()
         s = get_close_series(t, start=_5Y_START)
@@ -76,7 +77,7 @@ def screen(
     candidate_metrics = compute_metrics(
         candidate_series,
         benchmark=benchmark_series,
-        rfr=RISK_FREE_RATE,
+        rfr=None,  # use dynamic ^IRR rate (compute_metrics → _get_rfr), consistent with analytics/advise
         label=candidate_ticker,
     )
     candidate_trailing = trailing_return_windows(candidate_series)
@@ -90,14 +91,15 @@ def screen(
         corr = correlation(candidate_series, series)
         correlations[ticker] = _round(corr)
 
-    # ── Holdings overlap ───────────────────────────────────────────────────────
-    overlap = overlap_analysis(candidate_ticker, portfolio_name)
-
-    # ── Effective concentration at proposed allocation ─────────────────────────
+    # ── Holdings overlap + effective concentration ─────────────────────────────
+    # Aggregate the portfolio's stock-level weights once; both analyses need it.
+    portfolio_map = aggregate_portfolio_holdings(portfolio_name)
+    overlap = overlap_analysis(candidate_ticker, portfolio_name, portfolio_map=portfolio_map)
     concentration = effective_concentration(
         candidate_ticker,
         portfolio_name,
         candidate_allocation=candidate_allocation,
+        portfolio_map=portfolio_map,
     )
 
     # ── Top holdings of candidate ──────────────────────────────────────────────
@@ -124,15 +126,16 @@ def screen(
 
 # ── Head-to-head comparison ───────────────────────────────────────────────────
 
-def compare_multi(tickers: List[str]) -> dict:
+def compare_multi(tickers: list[str]) -> dict:
     """
     Multi-ticker comparison for 3+ ETFs: per-ticker metrics + correlation matrix.
     For exactly 2 tickers use compare() instead (includes cross-overlap analysis).
     """
     tickers = [t.upper() for t in tickers]
+    prefetch_prices([BENCHMARK_TICKER] + tickers, _5Y_START, date.today())
     benchmark = get_close_series(BENCHMARK_TICKER, start=_5Y_START)
 
-    price_map: Dict[str, pd.Series] = {}
+    price_map: dict[str, pd.Series] = {}
     metrics_map, trailing_map, info_map, commodity_map, sectors_map = {}, {}, {}, {}, {}
 
     for t in tickers:
@@ -166,6 +169,7 @@ def compare(ticker_a: str, ticker_b: str) -> dict:
     Returns metrics for both plus correlation between them.
     """
     ticker_a, ticker_b = ticker_a.upper(), ticker_b.upper()
+    prefetch_prices([ticker_a, ticker_b, BENCHMARK_TICKER], _5Y_START, date.today())
 
     series_a = get_close_series(ticker_a, start=_5Y_START)
     series_b = get_close_series(ticker_b, start=_5Y_START)

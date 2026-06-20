@@ -11,8 +11,8 @@ from core.screener import screen
 
 @click.command()
 @click.argument("ticker")
-@click.option("--portfolio", default="proposed", show_default=True,
-              help="Portfolio to compare against (proposed|previous)")
+@click.option("--portfolio", default="live", show_default=True,
+              help="Portfolio to screen against — a config name, or 'live' for current Robinhood holdings.")
 @click.option("--allocation", default=0.05, show_default=True, type=float,
               help="Assumed allocation for effective-concentration calc (e.g. 0.05 = 5%)")
 @click.option("--format", "fmt", default="table", show_default=True,

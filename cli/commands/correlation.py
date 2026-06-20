@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import click
 
 from cli.formatters import build_envelope, print_json, print_correlation_table
-from config import PORTFOLIOS, LOOKBACK_5Y
+from config import LOOKBACK_5Y, resolve_portfolio
 from core.data_fetcher import get_close_series, price_map_freshness
 from core.analytics import correlation_matrix
 
@@ -14,9 +14,10 @@ _5Y_START = LOOKBACK_5Y
 
 
 def run_correlation(portfolio_name: str) -> dict:
-    positions = PORTFOLIOS.get(portfolio_name)
-    if not positions:
-        raise ValueError(f"Portfolio '{portfolio_name}' not found")
+    try:
+        positions = resolve_portfolio(portfolio_name)
+    except ValueError as e:
+        raise click.UsageError(str(e))
 
     price_map = {}
     for pos in positions:
@@ -37,8 +38,8 @@ def run_correlation(portfolio_name: str) -> dict:
 
 
 @click.command()
-@click.option("--portfolio", default="proposed", show_default=True,
-              help="Portfolio name (proposed|previous)")
+@click.option("--portfolio", default="live", show_default=True,
+              help="Portfolio name from config.py, or 'live' for current Robinhood holdings.")
 @click.option("--format", "fmt", default="table", show_default=True,
               type=click.Choice(["json", "table"]), help="Output format")
 def correlation_cmd(portfolio: str, fmt: str):

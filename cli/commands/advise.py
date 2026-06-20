@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import os
+import logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from datetime import date, timedelta
@@ -16,15 +17,30 @@ from concurrent.futures import ThreadPoolExecutor
 from cli.formatters import build_envelope, print_json
 from core.broker import login, get_account_data, get_watchlist, get_purchase_dates
 from core.data_fetcher import get_close_series, prefetch_prices
-from core.analytics import TRADING_DAYS, _get_rfr
-from config import PORTFOLIOS
+from core.analytics import (
+    TRADING_DAYS, _get_rfr,
+    ann_return_from_returns, ann_vol_from_returns,
+    sharpe_from_returns, sortino_from_returns, max_drawdown,
+    portfolio_returns_series,
+)
+from config import PORTFOLIOS, THESIS_ANCHORS
 
-LOOKBACK_DAYS = 365 * 3
 CANDIDATE_ALLOCATION = 0.05
 MIN_HISTORY_DAYS = 252
 
-# Curated universe screened for discovery suggestions — thematically aligned with the
-# user's macro-driven ETF approach (defense, semis, energy, metals, frontier tech).
+# The portfolio simulation inner-joins all members on common dates, so one
+# short-history ticker silently truncates the whole window to its listing date.
+# Positions must cover ~the full requested lookback to enter the simulation;
+# the rest are excluded and reported. 0.9 tolerance absorbs holidays and
+# listings a few weeks younger than the window.
+_REQUIRED_HISTORY = {
+    "1Y": int(TRADING_DAYS * 1 * 0.9),
+    "3Y": int(TRADING_DAYS * 3 * 0.9),
+    "5Y": int(TRADING_DAYS * 5 * 0.9),
+    "10Y": int(TRADING_DAYS * 10 * 0.9),
+}
+
+# Curated universe screened for discovery suggestions across common thematic categories.
 # Tickers already in the portfolio or watchlist are filtered out at runtime.
 DISCOVERY_UNIVERSE: dict[str, str] = {
     # Defense / Aerospace
@@ -86,41 +102,25 @@ DISCOVERY_UNIVERSE: dict[str, str] = {
 
 # ── Metric helpers ─────────────────────────────────────────────────────────────
 
-def _ann_return(rets: pd.Series) -> float:
-    return (1 + rets.mean()) ** TRADING_DAYS - 1
+# Canonical, geometric metric definitions live in core.analytics — these thin
+# aliases keep the local call sites readable while guaranteeing advise agrees with
+# analytics/backtest on the same position (previously advise used an arithmetic
+# annualized-return that overstated high-vol names).
+_ann_return = ann_return_from_returns
+_ann_vol = ann_vol_from_returns
+_sharpe = sharpe_from_returns
+_sortino = sortino_from_returns
+_max_drawdown = max_drawdown          # canonical (price-based) drawdown
 
 
-def _ann_vol(rets: pd.Series) -> float:
-    return float(rets.std() * np.sqrt(TRADING_DAYS))
+def _safe_delta(a: float, b: float) -> float | None:
+    """a - b, or None if either side is NaN (keeps ΔSharpe/ΔSortino JSON-clean)."""
+    return a - b if not (np.isnan(a) or np.isnan(b)) else None
 
 
-def _sharpe(rets: pd.Series, rfr: float) -> float:
-    vol = _ann_vol(rets)
-    return (_ann_return(rets) - rfr) / vol if vol > 0 else float("nan")
-
-
-def _sortino(rets: pd.Series, rfr: float) -> float:
-    downside = rets[rets < 0]
-    if downside.empty:
-        return float("inf")
-    dd_vol = float(downside.std() * np.sqrt(TRADING_DAYS))
-    return (_ann_return(rets) - rfr) / dd_vol if dd_vol > 0 else float("nan")
-
-
-def _max_drawdown(prices: pd.Series) -> float:
-    return float((prices / prices.cummax() - 1).min())
-
-
-def _portfolio_returns(price_map: dict[str, pd.Series], weights: dict[str, float]) -> pd.Series:
-    aligned = pd.concat(price_map.values(), axis=1, keys=price_map.keys()).dropna()
-    if aligned.empty:
-        return pd.Series(dtype=float)
-    daily = aligned.pct_change().dropna()
-    total_w = sum(weights.get(t, 0) for t in aligned.columns)
-    if total_w == 0:
-        return pd.Series(dtype=float)
-    w = pd.Series({t: weights.get(t, 0) / total_w for t in aligned.columns})
-    return (daily * w).sum(axis=1)
+# Canonical implementation lives in core.analytics — a local copy here once
+# drifted from it, which is exactly how advise/analytics disagreements start.
+_portfolio_returns = portfolio_returns_series
 
 
 def _avg_corr(cand_rets: pd.Series, price_map: dict[str, pd.Series]) -> float | None:
@@ -141,8 +141,9 @@ def _load_price_map(tickers: list[str], start: date, end: date) -> dict[str, pd.
             s = get_close_series(ticker, str(start), str(end))
             if s is not None and not s.empty:
                 price_map[ticker] = s
-        except Exception:
-            pass
+        except Exception as e:
+            # Distinguish a genuine fetch error (logged) from "no history" (silent).
+            logging.getLogger(__name__).warning("price fetch failed for %s: %s", ticker, e)
     return price_map
 
 
@@ -164,6 +165,11 @@ def _score_trims(
         "sortino": _sortino(baseline_rets, rfr),
         "ann_return": _ann_return(baseline_rets),
         "ann_vol": _ann_vol(baseline_rets),
+        # Effective simulation window after the inner join across members —
+        # can be shorter than the requested lookback; always surfaced to the user.
+        "window_start": str(baseline_rets.index[0].date()) if not baseline_rets.empty else None,
+        "window_end": str(baseline_rets.index[-1].date()) if not baseline_rets.empty else None,
+        "window_days": int(len(baseline_rets)),
     }
 
     results = []
@@ -188,10 +194,8 @@ def _score_trims(
             "pos_sharpe": _sharpe(pos_rets, rfr),
             "pos_sortino": _sortino(pos_rets, rfr),
             "pos_dd": _max_drawdown(prices),
-            "delta_sharpe": new_sharpe - baseline["sharpe"]
-                if not (np.isnan(new_sharpe) or np.isnan(baseline["sharpe"])) else None,
-            "delta_sortino": new_sortino - baseline["sortino"]
-                if not (np.isnan(new_sortino) or np.isnan(baseline["sortino"])) else None,
+            "delta_sharpe": _safe_delta(new_sharpe, baseline["sharpe"]),
+            "delta_sortino": _safe_delta(new_sortino, baseline["sortino"]),
         })
 
     # Sort: positions whose removal would most improve the portfolio come first
@@ -203,8 +207,6 @@ def _score_additions(
     current_weights: dict[str, float],
     current_price_map: dict[str, pd.Series],
     candidates: list[dict],  # list of {ticker, name, price, ...}
-    start: date,
-    end: date,
     rfr: float,
 ) -> list[dict]:
     """Score candidates by their marginal impact when added at CANDIDATE_ALLOCATION."""
@@ -238,10 +240,8 @@ def _score_additions(
             "cand_sortino": _sortino(cand_rets, rfr),
             "cand_dd": _max_drawdown(cand_prices),
             "avg_corr": corr,
-            "delta_sharpe": new_sharpe - baseline_sharpe
-                if not (np.isnan(new_sharpe) or np.isnan(baseline_sharpe)) else None,
-            "delta_sortino": new_sortino - baseline_sortino
-                if not (np.isnan(new_sortino) or np.isnan(baseline_sortino)) else None,
+            "delta_sharpe": _safe_delta(new_sharpe, baseline_sharpe),
+            "delta_sortino": _safe_delta(new_sortino, baseline_sortino),
             "skip_reason": None,
         })
 
@@ -280,15 +280,27 @@ def _tax_fields(pd_info: dict) -> dict:
 
 
 def _trim_signal(r) -> str:
+    """Descriptive Sharpe-drag signal (single in-sample window; not tax-aware).
+
+    EXIT/TRIM mean removal improves the portfolio (ΔSharpe positive). WEAK means
+    the position is poor standalone but removing it does NOT help — a distinct
+    situation that was previously mislabelled TRIM. Thesis anchors are never
+    tagged EXIT/TRIM/WEAK — a hedge/diversifier drags trailing Sharpe in a bull
+    market by design, so the engine must not suggest exiting it.
+    """
     ds = r.get("delta_sharpe") or 0
     ps = r.get("pos_sharpe") or 0
     w = r.get("weight") or 0
-    if ds > 0.05:
-        return "EXIT"
-    if ds > 0.01 or ps < 0.3:
-        return "TRIM"
+    is_anchor = (r.get("ticker") or "").upper() in THESIS_ANCHORS
+
     if w > 0.25:
-        return "REDUCE"
+        return "REDUCE"                      # sizing note, applies to anchors too
+    if ds > 0.05:
+        return "ANCHOR" if is_anchor else "EXIT"
+    if ds > 0.01:
+        return "ANCHOR" if is_anchor else "TRIM"
+    if ps < 0.3:
+        return "ANCHOR" if is_anchor else "WEAK"
     return "HOLD"
 
 
@@ -324,21 +336,32 @@ _ADDITION_HEADERS = [
 
 @click.command()
 @click.option("--portfolio", default=None,
-              help="Target portfolio (e.g. v8) to cross-reference trim signals with drift.")
+              help="Target portfolio from config.py to cross-reference trim signals with drift.")
 @click.option("--discoveries", default=5, show_default=True, type=int,
               help="Number of universe discovery suggestions to show.")
+@click.option("--delta-adjusted", "-d", is_flag=True, default=False,
+              help="Reason on delta-adjusted economic exposure: folds option delta into weights, "
+                   "adds synthetic (option-only) positions, drops fully-capped names.")
+@click.option("--lookback", default="3Y", show_default=True,
+              type=click.Choice(["1Y", "3Y", "5Y", "10Y"]),
+              help="Simulation lookback window. Run several to check signal stability across regimes.")
 @click.option("--format", "fmt", default="table", show_default=True,
               type=click.Choice(["json", "table"]))
-def advise_cmd(portfolio: str | None, discoveries: int, fmt: str):
+def advise_cmd(portfolio: str | None, discoveries: int, delta_adjusted: bool, lookback: str, fmt: str):
     """
     Full portfolio advisory: health check, trim signals, watchlist screening,
     and discovery suggestions from a curated thematic universe.
 
-    Fetches live positions and watchlist directly from Robinhood.
+    Fetches live positions and watchlist directly from Robinhood. With
+    --delta-adjusted, weights reflect economic (option-inclusive) exposure.
+    --lookback {1Y,3Y,5Y,10Y} re-runs the simulation over a different window;
+    a position flagged in one window but not others is regime-dependent.
     """
     if portfolio and portfolio not in PORTFOLIOS:
         click.echo(f"  Unknown portfolio '{portfolio}'. Valid: {', '.join(PORTFOLIOS)}", err=True)
         sys.exit(1)
+
+    lookback_days = {"1Y": 365, "3Y": 365*3, "5Y": 365*5, "10Y": 365*10}[lookback]
 
     try:
         login()
@@ -357,8 +380,17 @@ def advise_cmd(portfolio: str | None, discoveries: int, fmt: str):
         click.echo("  No live positions found.", err=True)
         sys.exit(1)
 
+    if delta_adjusted:
+        from core.exposure import compute_exposure, exposure_as_holdings
+        exp = compute_exposure()
+        total_value = exp["total_value"]
+        holdings = exposure_as_holdings(exp, holdings)
+        if not holdings:
+            click.echo("  No net-long economic exposure to advise on.", err=True)
+            sys.exit(1)
+
     end = date.today()
-    start = end - timedelta(days=LOOKBACK_DAYS)
+    start = end - timedelta(days=lookback_days)
     rfr = _get_rfr()
 
     held_tickers = set(holdings.keys())
@@ -388,9 +420,11 @@ def advise_cmd(portfolio: str | None, discoveries: int, fmt: str):
 
     price_map = _load_price_map(all_fetch_tickers, start, end)
 
-    # Portfolio simulation uses only holdings with sufficient history
+    # Portfolio simulation uses only holdings covering ~the full lookback —
+    # one short-history member would otherwise truncate the joint window for all.
+    required_days = max(MIN_HISTORY_DAYS, _REQUIRED_HISTORY[lookback])
     sim_price_map = {t: s for t, s in price_map.items()
-                     if t in held_tickers and len(s) >= MIN_HISTORY_DAYS}
+                     if t in held_tickers and len(s) >= required_days}
     current_weights = {t: holdings[t]["portfolio_pct"] for t in sim_price_map}
 
     excluded_from_sim = held_tickers - set(sim_price_map)
@@ -411,8 +445,8 @@ def advise_cmd(portfolio: str | None, discoveries: int, fmt: str):
 
     # Run all three scoring passes
     baseline, trim_scores = _score_trims(current_weights, sim_price_map, holdings, rfr)
-    watchlist_scored = _score_additions(current_weights, sim_price_map, watchlist_candidates, start, end, rfr)
-    discovery_scored = _score_additions(current_weights, sim_price_map, discovery_candidates, start, end, rfr)
+    watchlist_scored = _score_additions(current_weights, sim_price_map, watchlist_candidates, rfr)
+    discovery_scored = _score_additions(current_weights, sim_price_map, discovery_candidates, rfr)
 
     # Target portfolio tickers for drift cross-reference
     target_tickers: set[str] = set()
@@ -484,14 +518,21 @@ def advise_cmd(portfolio: str | None, discoveries: int, fmt: str):
         f"Ann. Return: {baseline['ann_return']:.1%}  |  "
         f"Ann. Vol: {baseline['ann_vol']:.1%}"
     )
-    click.echo(f"  RFR: {rfr:.1%}  |  Lookback: 3Y  |  Simulation: {len(sim_price_map)}/{len(holdings)} positions")
+    click.echo(f"  RFR: {rfr:.1%}  |  Lookback: {lookback}  |  Simulation: {len(sim_price_map)}/{len(holdings)} positions")
+    if baseline.get("window_start"):
+        click.echo(f"  Effective window: {baseline['window_start']} → {baseline['window_end']} "
+                   f"({baseline['window_days']} trading days)")
     if excluded_from_sim:
-        click.echo(f"  Excluded (< 1Y history): {', '.join(sorted(excluded_from_sim))}")
+        click.echo(f"  Excluded (< {lookback} history): {', '.join(sorted(excluded_from_sim))}")
 
     # ── Section 1: Trim Signals ──────────────────────────────────────────────
     click.echo(f"\n{'─'*82}")
     click.echo(f"  SECTION 1 — TRIM SIGNALS  (ΔSharpe = improvement if this position is removed)")
     click.echo(f"{'─'*82}")
+    click.echo(f"  Caveat: single {lookback} in-sample window, pre-tax, pre-cost. A hedge/diversifier")
+    click.echo(f"  drags Sharpe in a bull market by design — re-run --lookback 1Y/3Y/5Y/10Y to test")
+    click.echo(f"  stability. ANCHOR = conviction hold (never auto-flagged EXIT). WEAK = poor")
+    click.echo(f"  standalone metrics but removal would NOT improve the portfolio. Not trade advice.")
 
     trim_rows = []
     for r in trim_scores:

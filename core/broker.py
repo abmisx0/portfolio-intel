@@ -6,6 +6,8 @@ READ-ONLY. The only robin_stocks calls permitted here are:
     rh.account.build_holdings()                     — current equity positions
     rh.profiles.load_portfolio_profile()            — portfolio equity
     rh.options.get_open_option_positions()          — open options positions
+    rh.options.get_option_instrument_data_by_id()   — option strike/type metadata
+    rh.options.get_option_market_data_by_id()        — option mark/implied vol/greeks
     rh.orders.get_all_open_option_orders()          — pending options orders
     rh.orders.get_all_stock_orders()                — equity order history
     rh.stocks.get_instrument_by_url()               — resolve instrument URL → ticker
@@ -21,10 +23,12 @@ the first successful login — MFA is only prompted once.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
+import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +37,13 @@ _instrument_cache: dict[str, str] = {}  # instrument URL → ticker symbol
 
 
 def login() -> None:
-    """Authenticate with Robinhood. Token and module cached for this process."""
+    """Authenticate with Robinhood. Token and module cached for this process.
+
+    If RH_MFA_SECRET (the TOTP secret from authenticator-app MFA setup) is in
+    .env, a 6-digit code is generated and passed to login — this skips the
+    device-approval flow entirely, which is flaky under rate limits and dies
+    when the in-app prompt isn't approved within its short validity window.
+    """
     global _rh_module
     username = os.getenv("RH_USERNAME")
     password = os.getenv("RH_PASSWORD")
@@ -43,7 +53,24 @@ def login() -> None:
         import robin_stocks.robinhood as rh
     except ImportError:
         raise ImportError("robin-stocks is not installed. Run: pip install robin-stocks")
-    rh.login(username, password, store_session=True)
+
+    mfa_code = None
+    mfa_secret = os.getenv("RH_MFA_SECRET")
+    if mfa_secret:
+        try:
+            import pyotp
+            mfa_code = pyotp.TOTP(mfa_secret).now()
+        except ImportError:
+            logger.warning("RH_MFA_SECRET set but pyotp not installed (pip install pyotp) "
+                           "— falling back to device-approval login")
+
+    # robin_stocks prints progress to stdout; redirect to stderr so it never
+    # pollutes JSON output (stdout is reserved for the --format json envelope).
+    with contextlib.redirect_stdout(sys.stderr):
+        if mfa_code:
+            rh.login(username, password, mfa_code=mfa_code, store_session=True)
+        else:
+            rh.login(username, password, store_session=True)
     _rh_module = rh
 
 
@@ -117,17 +144,37 @@ def get_option_positions() -> list[dict]:
     """
     rh = _require_login()
     raw: list = rh.options.get_open_option_positions() or []
-    results = []
-    for pos in raw:
+
+    def _normalize(pos: dict) -> dict | None:
         try:
             option_id = pos.get("option_id") or ""
             strike = 0.0
             option_type = ""
+            implied_vol = None
+            mark_price = None
+            broker_greeks: dict = {}
             if option_id:
                 instrument = rh.options.get_option_instrument_data_by_id(option_id) or {}
                 strike = float(instrument.get("strike_price") or 0)
                 option_type = (instrument.get("type") or "").lower()
-            results.append({
+                md = rh.options.get_option_market_data_by_id(option_id) or {}
+                if isinstance(md, list):
+                    md = md[0] if md else {}
+                iv = md.get("implied_volatility")
+                implied_vol = float(iv) if iv not in (None, "") else None
+                mk = md.get("mark_price") or md.get("adjusted_mark_price")
+                mark_price = float(mk) if mk not in (None, "") else None
+                # Robinhood returns per-share Greeks for the LONG side on the same
+                # market-data record — surface them so callers can prefer the
+                # broker's production model over our Black-Scholes approximation.
+                for g in ("delta", "gamma", "theta", "vega", "rho"):
+                    v = md.get(g)
+                    if v not in (None, ""):
+                        try:
+                            broker_greeks[g] = float(v)
+                        except (TypeError, ValueError):
+                            pass
+            return {
                 "ticker": (pos.get("chain_symbol") or "").upper(),
                 "expiration": pos.get("expiration_date", ""),
                 "strike": strike,
@@ -136,9 +183,17 @@ def get_option_positions() -> list[dict]:
                 "quantity": float(pos.get("quantity") or 0),
                 "avg_price": float(pos.get("average_price") or 0),
                 "trade_value_multiplier": float(pos.get("trade_value_multiplier") or 100),
-            })
+                "implied_volatility": implied_vol,  # per-contract IV from chain, None if unavailable
+                "mark_price": mark_price,           # current per-share option mark
+                "broker_greeks": broker_greeks,     # per-share LONG-side Greeks from RH, {} if absent
+            }
         except (TypeError, ValueError):
             logger.warning("Skipping malformed option position: %s", pos.get("id"))
+            return None
+
+    # Each position needs two per-id REST calls; fan them out instead of serializing.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = [r for r in pool.map(_normalize, raw) if r is not None]
     return results
 
 
@@ -230,9 +285,12 @@ def get_purchase_dates() -> dict[str, dict]:
         dates.sort()
         last = dates[-1]
         try:
-            ltcg_date = last.replace(year=last.year + 1)
-        except ValueError:
-            ltcg_date = last.replace(year=last.year + 1, day=28)
+            anniversary = last.replace(year=last.year + 1)
+        except ValueError:  # Feb 29 → Feb 28 in a non-leap year
+            anniversary = last.replace(year=last.year + 1, day=28)
+        # LTCG requires holding MORE than one year — the first long-term day is the
+        # day after the one-year anniversary, not the anniversary itself.
+        ltcg_date = anniversary + timedelta(days=1)
         result[ticker] = {
             "first_purchase": str(dates[0]),
             "last_purchase": str(last),
@@ -240,6 +298,91 @@ def get_purchase_dates() -> dict[str, dict]:
             "ltcg_all_lots_date": str(ltcg_date),
         }
     return result
+
+
+def get_cash_flows() -> list[dict]:
+    """
+    Return dated equity cash flows derived from filled stock order history.
+
+    Each flow is a single filled buy or sell, with a signed dollar amount from
+    the investor's perspective:
+        buy  → negative (cash leaves your pocket into the position)
+        sell → positive (cash returns to your pocket)
+
+    This is the raw material for a money-weighted (IRR) return: the actual
+    timing and size of every contribution/withdrawal. Dividends, DRIP, and
+    ACATS transfers-in are NOT in stock order history, so a book funded partly
+    by those will show an understated cost basis here — callers should surface
+    that caveat.
+
+    Returns (sorted oldest-first):
+        [{"date": "YYYY-MM-DD", "ticker": str, "side": "buy"|"sell",
+          "amount": float,     # signed dollars: buy < 0, sell > 0
+          "shares": float}]    # always positive share count for the fill
+    """
+    rh = _require_login()
+    orders = rh.orders.get_all_stock_orders() or []
+
+    unique_urls = {
+        order["instrument"]
+        for order in orders
+        if order.get("state") == "filled" and order.get("instrument")
+    }
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        pool.map(lambda u: _resolve_instrument_url(rh, u), unique_urls)
+
+    flows: list[dict] = []
+    for order in orders:
+        if order.get("state") != "filled":
+            continue
+        side = (order.get("side") or "").lower()
+        if side not in ("buy", "sell"):
+            continue
+        url = order.get("instrument") or ""
+        tx_str = order.get("last_transaction_at") or ""
+        if not url or not tx_str:
+            continue
+        try:
+            tx_date = date.fromisoformat(tx_str[:10])
+        except ValueError:
+            continue
+
+        # Prefer the broker's executed notional (covers fractional fills and
+        # price improvement exactly); fall back to price × quantity.
+        notional = None
+        en = order.get("executed_notional")
+        if isinstance(en, dict) and en.get("amount") not in (None, ""):
+            try:
+                notional = float(en["amount"])
+            except (TypeError, ValueError):
+                notional = None
+        if notional is None:
+            try:
+                notional = float(order.get("average_price") or 0) * float(
+                    order.get("cumulative_quantity") or 0
+                )
+            except (TypeError, ValueError):
+                continue
+        if notional <= 0:
+            continue
+
+        ticker = _resolve_instrument_url(rh, url)
+        if not ticker:
+            continue
+        try:
+            shares = float(order.get("cumulative_quantity") or 0)
+        except (TypeError, ValueError):
+            shares = 0.0
+        flows.append({
+            "date": str(tx_date),
+            "ticker": ticker,
+            "side": side,
+            "amount": -notional if side == "buy" else notional,
+            "shares": shares,
+        })
+
+    flows.sort(key=lambda f: f["date"])
+    return flows
 
 
 def get_watchlist(name: str = "Watchlist") -> list[dict]:

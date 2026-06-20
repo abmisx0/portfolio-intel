@@ -10,10 +10,10 @@ from core.backtester import backtest
 
 
 @click.command()
-@click.option("--a", "portfolio_a", default="proposed", show_default=True,
-              help="First portfolio name (proposed|previous)")
-@click.option("--b", "portfolio_b", default="previous", show_default=True,
-              help="Second portfolio name (proposed|previous)")
+@click.option("--a", "portfolio_a", default="core_satellite", show_default=True,
+              help="Portfolio A (from config.py).")
+@click.option("--b", "portfolio_b", default="thematic", show_default=True,
+              help="Portfolio B to compare against (from config.py).")
 @click.option("--start", default="2020-01-01", show_default=True,
               help="Backtest start date (YYYY-MM-DD)")
 @click.option("--end", default=None,
@@ -21,8 +21,9 @@ from core.backtester import backtest
 @click.option("--no-benchmark", is_flag=True, default=False,
               help="Exclude benchmark")
 @click.option("--benchmark", "benchmark", default="voo", show_default=True,
-              type=click.Choice(["voo", "spx"], case_sensitive=False),
-              help="Benchmark: voo (ETF, includes fees) or spx (pure S&P 500 index)")
+              type=click.Choice(["voo", "spx", "nasdaq", "russell"], case_sensitive=False),
+              help="Benchmark: voo (S&P 500 ETF), spx (pure S&P 500 index), "
+                   "nasdaq (QQQ), or russell (IWM)")
 @click.option("--format", "fmt", default="table", show_default=True,
               type=click.Choice(["json", "table"]), help="Output format")
 def backtest_cmd(

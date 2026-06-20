@@ -7,10 +7,10 @@ Does NOT require the web server to be running. Imports core modules directly.
 What it runs:
   1. Fetch latest prices for all positions
   2. 5Y + 3Y analytics (with week-over-week delta)
-  3. 7.5Y backtest vs previous portfolio (SPX benchmark)
+  3. Historical backtest vs a comparison portfolio (SPX benchmark)
   4. Correlation matrix
   5. Top 10 effective holdings
-  6. Tier 1 optimizer: 3Y+5Y Sharpe, 3Y+5Y Omega (with v8 drift flags)
+  6. Tier 1 optimizer: 3Y+5Y Sharpe, 3Y+5Y Omega (with drift vs target weights)
   7. Portfolio alerts (correlation, concentration, theme overlap)
   8. Research scan: scrape forums for ETF ideas, screen top candidates
 
@@ -22,7 +22,7 @@ Discord output: one portfolio-status message + one research message (if findings
 Usage (manual test):
     cd portfolio-intel
     python3 scripts/weekly_sync.py
-    python3 scripts/weekly_sync.py --portfolio v8
+    python3 scripts/weekly_sync.py --portfolio my_portfolio
 """
 from __future__ import annotations
 
@@ -52,13 +52,6 @@ from core.research import run_research
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-# ── v8 optimizer caps and targets ─────────────────────────────────────────────
-_V8_CAPS = {"SMH": 0.35, "PPA": 0.25, "NLR": 0.15, "VDE": 0.15, "SLV": 0.10, "IAU": 0.10}
-_V8_TARGETS = {
-    "SMH": 0.28, "PPA": 0.21, "VDE": 0.13, "NLR": 0.11,
-    "SLV": 0.10, "IAU": 0.10, "QTUM": 0.07,
-}
-
 _TIER1_OBJECTIVES = [
     ("3Y Sharpe", "sharpe", 3),
     ("5Y Sharpe", "sharpe", 5),
@@ -66,13 +59,10 @@ _TIER1_OBJECTIVES = [
     ("5Y Omega",  "omega",  5),
 ]
 
-# Known high-corr pairs in v8 — not flagged as "new"
-_KNOWN_HIGH_CORR = {frozenset(["SMH", "QTUM"]), frozenset(["SLV", "IAU"])}
-
 # Thresholds for status determination
 _SHARPE_DROP_WATCH  = 0.08   # week-over-week Sharpe drop to trigger WATCH
 _SHARPE_DROP_REVIEW = 0.15
-_OPT_DRIFT_WATCH    = 0.05   # Tier1 avg drifts ≥5pp from v8 target → WATCH
+_OPT_DRIFT_WATCH    = 0.05   # Tier1 avg drifts ≥5pp from target → WATCH
 _OPT_DRIFT_REVIEW   = 0.10   # ≥10pp → REVIEW
 _HIGH_CORR_THRESH   = 0.75
 
@@ -180,6 +170,7 @@ def _discord_portfolio_msg(
     opt_drifts: dict[str, float],
     status: str,
     reasons: list[str],
+    compare_to: str = "",
 ) -> str:
     lines: list[str] = []
     lines.append(f"{portfolio} — {freshness}")
@@ -219,14 +210,14 @@ def _discord_portfolio_msg(
     )
     lines.append("")
 
-    # Backtest vs previous — headline only
-    if bt:
+    # Backtest vs comparison portfolio — headline only
+    if bt and compare_to:
         a_s = bt.get(portfolio, {}).get("metrics", {}).get("sharpe_ratio")
-        b_s = bt.get("previous", {}).get("metrics", {}).get("sharpe_ratio")
+        b_s = bt.get(compare_to, {}).get("metrics", {}).get("sharpe_ratio")
         if a_s and b_s:
             diff = a_s - b_s
             lines.append(
-                f"Backtest vs previous (7.5Y):  "
+                f"Backtest vs {compare_to} (5Y):  "
                 f"Sharpe {a_s:.3f} vs {b_s:.3f}  ({'+' if diff>=0 else ''}{diff:.3f})"
             )
     lines.append("")
@@ -238,7 +229,7 @@ def _discord_portfolio_msg(
     if not watch_drifts and not review_drifts:
         lines.append("Optimizer:  all Tier 1 signals within 5pp of targets — stable")
     else:
-        lines.append("Optimizer Tier 1 signal drift vs v8 targets:")
+        lines.append("Optimizer Tier 1 signal drift vs target weights:")
         for t, d in {**review_drifts, **watch_drifts}.items():
             flag = "REVIEW" if abs(d) >= _OPT_DRIFT_REVIEW else "watch"
             sign = "+" if d > 0 else ""
@@ -251,20 +242,7 @@ def _discord_portfolio_msg(
         for ta, tb, v in new_corr_pairs:
             lines.append(f"Correlation NEW flag:  {ta}/{tb} {v:.3f} — investigate")
     else:
-        # Count known high-corr pairs for informational line
-        known_flags = [
-            (ta, tb, corr_data.get("matrix", {}).get(ta, {}).get(tb, 0.0))
-            for ta in corr_data.get("tickers", [])
-            for tb in corr_data.get("tickers", [])
-            if ta < tb
-            and frozenset([ta, tb]) in _KNOWN_HIGH_CORR
-            and abs(corr_data.get("matrix", {}).get(ta, {}).get(tb, 0.0)) >= _HIGH_CORR_THRESH
-        ]
-        if known_flags:
-            lines.append(
-                f"Correlation:  {len(known_flags)} known flag(s) — "
-                + "  ".join(f"{ta}/{tb} {v:.3f}" for ta, tb, v in known_flags)
-            )
+        lines.append("Correlation:  no new high-corr pairs this week")
     lines.append("")
 
     # Alerts — warnings and above only
@@ -310,6 +288,8 @@ def _full_report(
     opt_results: list[tuple[str, dict]],
     alert_data: dict, research: dict,
     status: str, reasons: list[str],
+    weights: dict | None = None,
+    compare_to: str = "",
 ) -> str:
     sections: list[str] = []
 
@@ -351,14 +331,14 @@ def _full_report(
     sections.append("\n".join(analytics_lines))
 
     # ── Backtest
-    if bt:
+    if bt and compare_to:
         a_m  = bt.get(portfolio, {}).get("metrics", {})
-        b_m  = bt.get("previous", {}).get("metrics", {})
+        b_m  = bt.get(compare_to, {}).get("metrics", {})
         bm_key = f"benchmark_{bt.get('benchmark', 'SPX')}"
         bm_m = bt.get(bm_key, {}).get("metrics", {})
         bt_lines = [
             "",
-            f"Backtest vs previous ({bt.get('actual_start', '?')} → {bt.get('actual_end', '?')}):",
+            f"Backtest vs {compare_to} ({bt.get('actual_start', '?')} → {bt.get('actual_end', '?')}):",
         ]
         for label, key, scale, fmt, unit in [
             ("Sharpe",     "sharpe_ratio",           1.0,   ".4f", ""),
@@ -374,7 +354,7 @@ def _full_report(
                 continue
             row = f"  {label:<14}: {portfolio} {av * scale:{fmt}}{unit}"
             if bv is not None:
-                row += f"  previous {bv * scale:{fmt}}{unit}"
+                row += f"  {compare_to} {bv * scale:{fmt}}{unit}"
             if bmv is not None:
                 row += f"  SPX {bmv * scale:{fmt}}{unit}"
             bt_lines.append(row)
@@ -416,17 +396,18 @@ def _full_report(
             "  Ticker  " + "".join(f"{lbl:>10}" for lbl in obj_labels)
             + "     Avg    Target   Drift"
         )
-        target_tickers = list(_V8_TARGETS.keys())
+        target_weights = weights or {}
+        target_tickers = list(target_weights.keys()) if target_weights else []
         for t in target_tickers:
-            weights = [r.get("optimal_weights", {}).get(t, 0.0) for _, r in opt_results]
-            avg = sum(weights) / len(weights)
-            target = _V8_TARGETS.get(t, 0.0)
+            w_list = [r.get("optimal_weights", {}).get(t, 0.0) for _, r in opt_results]
+            avg = sum(w_list) / len(w_list)
+            target = target_weights.get(t, 0.0)
             drift  = avg - target
             flag   = " REVIEW" if abs(drift) >= _OPT_DRIFT_REVIEW else \
                      " watch"  if abs(drift) >= _OPT_DRIFT_WATCH  else ""
             opt_lines.append(
                 f"  {t:<6}  "
-                + "".join(f"{w*100:>9.1f}%" for w in weights)
+                + "".join(f"{w*100:>9.1f}%" for w in w_list)
                 + f"  {avg*100:>5.1f}%   {target*100:.0f}%   "
                 + f"{'+' if drift>0 else ''}{drift*100:.1f}pp{flag}"
             )
@@ -460,6 +441,7 @@ def run_sync(portfolio: str) -> None:
 
     tickers = [pos["ticker"].upper() for pos in positions]
     weights = {pos["ticker"].upper(): pos["weight"] for pos in positions}
+    compare_to = next((name for name in PORTFOLIOS if name != portfolio), "")
     logger.info("Syncing %d tickers for portfolio %s …", len(tickers), portfolio)
 
     # ── 1. Fetch prices ───────────────────────────────────────────────────────
@@ -488,14 +470,15 @@ def run_sync(portfolio: str) -> None:
     metrics_3y = _compute_analytics(pm_3y, weights, bm_3y)
     prev = get_last_sync_metrics(portfolio)
 
-    # ── 3. Backtest vs previous ───────────────────────────────────────────────
-    logger.info("Running backtest vs previous …")
-    bt_start = (date.today() - timedelta(days=int(365 * 7.5))).isoformat()
-    try:
-        bt = backtest(portfolio, "previous", start=bt_start, benchmark="spx")
-    except Exception as exc:
-        logger.warning("Backtest failed: %s", exc)
-        bt = {}
+    # ── 3. Backtest vs comparison portfolio ──────────────────────────────────────
+    bt_start = (date.today() - timedelta(days=int(365 * 5))).isoformat()
+    bt: dict = {}
+    if compare_to:
+        logger.info("Running backtest vs %s …", compare_to)
+        try:
+            bt = backtest(portfolio, compare_to, start=bt_start, benchmark="spx")
+        except Exception as exc:
+            logger.warning("Backtest failed: %s", exc)
 
     # ── 4. Correlation matrix ─────────────────────────────────────────────────
     logger.info("Computing correlation matrix …")
@@ -509,7 +492,7 @@ def run_sync(portfolio: str) -> None:
             if ta >= tb:
                 continue
             v = corr_data.get("matrix", {}).get(ta, {}).get(tb, 0.0)
-            if abs(v) >= _HIGH_CORR_THRESH and frozenset([ta, tb]) not in _KNOWN_HIGH_CORR:
+            if abs(v) >= _HIGH_CORR_THRESH:
                 new_corr_pairs.append((ta, tb, v))
 
     # ── 5. Holdings ───────────────────────────────────────────────────────────
@@ -528,18 +511,18 @@ def run_sync(portfolio: str) -> None:
         logger.info("  %s …", label)
         try:
             result = optimize(tickers=tickers, objective=objective,
-                              start=start_dt, per_max=_V8_CAPS)
+                              start=start_dt)
             opt_results.append((label, result))
         except Exception as exc:
             logger.warning("  %s failed: %s", label, exc)
 
-    # Compute Tier 1 averages and drifts vs v8 targets
+    # Compute Tier 1 averages and drifts vs target weights from portfolio config
     opt_drifts: dict[str, float] = {}
     if opt_results:
         for t in tickers:
             weights_list = [r.get("optimal_weights", {}).get(t, 0.0) for _, r in opt_results]
             avg = sum(weights_list) / len(weights_list)
-            opt_drifts[t] = avg - _V8_TARGETS.get(t, avg)
+            opt_drifts[t] = avg - weights.get(t, avg)
 
     # ── 7. Alerts ─────────────────────────────────────────────────────────────
     logger.info("Running portfolio alerts …")
@@ -572,6 +555,7 @@ def run_sync(portfolio: str) -> None:
         portfolio, freshness, metrics_5y, metrics_3y, prev,
         bt, corr_data, holdings, opt_results, alert_data,
         new_corr_pairs, opt_drifts, status, reasons,
+        compare_to=compare_to,
     )
     discord_research = _discord_research_msg(research, portfolio)
 
@@ -579,6 +563,7 @@ def run_sync(portfolio: str) -> None:
         portfolio, freshness, metrics_5y, metrics_3y, prev,
         bt, corr_data, holdings, opt_results,
         alert_data, research, status, reasons,
+        weights=weights, compare_to=compare_to,
     )
 
     # ── 11. Save insight ──────────────────────────────────────────────────────

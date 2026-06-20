@@ -47,6 +47,16 @@ def _conn():
         con.close()
 
 
+def publish_checkup(title: str, body: str, metrics: dict | None = None) -> dict:
+    """Publish a checkup report everywhere at once: insights DB (web dashboard)
+    + Discord webhook (markdown, multi-part). Returns {insight_id, discord_ok}."""
+    insight_id = save_insight(trigger="checkup", title=title, body=body,
+                              portfolio="live", metrics=metrics)
+    from core.notifier import post_discord
+    discord_ok = post_discord(title, body, portfolio="live", markdown=True)
+    return {"insight_id": insight_id, "discord_ok": discord_ok}
+
+
 def save_insight(trigger: str, title: str, body: str,
                  portfolio: str | None, metrics: dict | None) -> int:
     ts = datetime.utcnow().isoformat()
@@ -63,11 +73,16 @@ def save_insight(trigger: str, title: str, body: str,
 def get_insights(limit: int = 50) -> list[dict]:
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, timestamp, trigger, title, body, portfolio"
+            "SELECT id, timestamp, trigger, title, body, portfolio, metrics_json"
             " FROM insights ORDER BY timestamp DESC LIMIT ?",
             (limit,),
         ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["metrics"] = json.loads(d.pop("metrics_json")) if d.get("metrics_json") else None
+        out.append(d)
+    return out
 
 
 def get_last_sync_metrics(portfolio: str) -> dict | None:

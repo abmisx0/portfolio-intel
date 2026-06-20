@@ -16,7 +16,7 @@ from core.rebalancer import compute_rebalance
 
 @click.command()
 @click.option("--portfolio", default=None,
-              help="Target portfolio to compare against (e.g. v8). Shows drift and share trades.")
+              help="Target portfolio from config.py to compare against. Shows drift and trade list.")
 @click.option("--format", "fmt", default="table", show_default=True,
               type=click.Choice(["json", "table"]))
 def positions_cmd(portfolio: str | None, fmt: str):

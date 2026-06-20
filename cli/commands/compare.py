@@ -18,8 +18,8 @@ def compare_cmd(tickers: tuple, fmt: str):
 
     \b
     Examples:
-      compare NLR URA
-      compare RING GLD IAU GOAU
+      compare QQQ SPY
+      compare GLD IAU SGOL GLDM
       compare SMH SOXX QQQ --format json
     """
     if len(tickers) < 2:

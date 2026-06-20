@@ -12,13 +12,13 @@ Sources (no authentication required):
 Quality filters applied before flagging as interesting:
   - quoteType == "ETF" (not individual stocks)
   - 5Y Sharpe >= MIN_SHARPE
-  - Max correlation to any v8 position < MAX_CORR
+  - Max correlation to any existing portfolio position < MAX_CORR
   - Max drawdown > MAX_DD (not catastrophic)
   - Mentioned >= MIN_MENTIONS times across all sources
 
 Usage:
     from core.research import run_research
-    result = run_research("v8", active_tickers=["SMH", "PPA", ...])
+    result = run_research("my_portfolio", active_tickers=["VOO", "QQQ", ...])
 """
 from __future__ import annotations
 
@@ -89,19 +89,16 @@ _NOISE: frozenset[str] = frozenset({
     "RIVN", "SNAP", "SOFI", "TSLA", "UBER", "ZOOM",
 })
 
-# Tickers we've already evaluated and consciously rejected
+# Tickers that will never surface as interesting discoveries regardless of mentions.
+# Extend this list with tickers you've already evaluated and rejected for your thesis.
 _KNOWN_REJECTS: frozenset[str] = frozenset({
-    "AMLP", "GDX", "GDXJ", "GLD", "GOAU", "INDS", "ITA", "LIT", "REMX",
-    "REZ", "RING", "SRVR", "URA", "VGT", "VNQ", "VOO",
-    # Broad market / passive — explicitly excluded from thesis-driven portfolio
+    # Passive ultra-broad market — trivially known, not discovery candidates
     "SPY", "IVV", "VTI", "VT", "VXUS", "SCHB", "ITOT", "SPTM", "SCHX",
     "BRKB", "BRKA",
-    # Dividend-focused — not aligned with growth thesis
+    # Dividend-focused income ETFs — below typical growth Sharpe thresholds
     "SCHD", "VYM", "DVY", "HDV", "DGRO", "NOBL",
-    # Bond ETFs — fail Sharpe threshold but waste screening slots
+    # Bond ETFs — fail MIN_SHARPE but waste screening API calls
     "TLT", "IEF", "SHY", "BND", "AGG", "VCIT", "LQD", "HYG", "JNK",
-    # Broad QQQ — tech coverage already handled by SMH
-    "QQQ", "QQQM",
 })
 
 
@@ -171,25 +168,25 @@ def _check_etf(ticker: str) -> tuple[bool, str]:
 # ── Verdict helpers ───────────────────────────────────────────────────────────
 
 def _sharpe_tier(sharpe: float) -> str:
-    """Label Sharpe relative to v8 positions (5Y reference)."""
+    """Label Sharpe into broad quality tiers (5Y reference)."""
     if sharpe >= 0.85:
-        return "top-tier Sharpe (PPA/IAU range)"
+        return "top-tier Sharpe (≥0.85)"
     if sharpe >= 0.70:
-        return "strong Sharpe (NLR/VDE range)"
+        return "strong Sharpe (0.70–0.85)"
     if sharpe >= 0.55:
-        return "competitive Sharpe (QTUM range)"
-    return "marginal Sharpe (above minimum, below most v8 positions)"
+        return "competitive Sharpe (0.55–0.70)"
+    return "marginal Sharpe (above minimum threshold)"
 
 
 def _corr_action(max_corr: float, max_corr_ticker: str) -> str:
-    """Describe portfolio fit based on highest correlation to any v8 position."""
+    """Describe portfolio fit based on highest correlation to any existing position."""
     if max_corr >= 0.80:
         return (f"high overlap with {max_corr_ticker} (corr {max_corr:.2f}) — "
                 f"would displace it, not add alongside")
     if max_corr >= 0.65:
         return (f"moderate overlap with {max_corr_ticker} (corr {max_corr:.2f}) — "
                 f"compare head-to-head before adding")
-    return f"low correlation to all v8 positions (max {max_corr:.2f} vs {max_corr_ticker}) — additive"
+    return f"low correlation to portfolio (max {max_corr:.2f} vs {max_corr_ticker}) — additive"
 
 
 def _fmt_aum(aum: float | None) -> str:
@@ -207,7 +204,7 @@ def run_research(portfolio: str, active_tickers: list[str]) -> dict:
     Full research pipeline: scrape → filter → validate → screen → report.
 
     Args:
-        portfolio:       Portfolio name to screen candidates against (e.g. "v8").
+        portfolio:       Portfolio name to screen candidates against (from config.py).
         active_tickers:  Tickers already in the active portfolio — excluded from results.
 
     Returns dict with keys:

@@ -68,7 +68,7 @@ _FRED_SERIES: dict[str, str] = {
 }
 
 # Energy ETFs eligible for WTI crude overlay in compare()
-# NLR and URA are nuclear/uranium — WTI is the wrong commodity; excluded until uranium futures are available
+# Nuclear/uranium ETFs are excluded — WTI is the wrong commodity for them
 ENERGY_TICKERS = {"VDE", "XLE", "XOP", "OIH"}
 
 # Commodity-adjacent ETFs for gold overlay

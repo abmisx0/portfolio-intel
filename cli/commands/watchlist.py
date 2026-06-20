@@ -64,7 +64,7 @@ def wl_list(fmt: str):
 
 
 @watchlist_cmd.command("screen")
-@click.option("--portfolio", default="proposed", show_default=True)
+@click.option("--portfolio", default="core_satellite", show_default=True)
 @click.option("--format", "fmt", default="table", type=click.Choice(["json", "table"]))
 def wl_screen(portfolio: str, fmt: str):
     """Run the screener on every ticker in the watchlist."""
