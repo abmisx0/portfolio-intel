@@ -1,0 +1,60 @@
+# Credentials — never commit
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Robinhood OAuth token cache (stored by robin_stocks)
+*.pickle
+.tokens/
+
+# SQLite cache and local data — regeneratable
+data/cache.db
+data/*.db
+data/*.json
+# ...but ship the static holdings fallback (used when yfinance/Finnhub miss)
+!data/seed_holdings.json
+# Personal saved portfolios live here and must never be committed
+data/portfolios.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+Thumbs.db
+
+# Local Claude Code workspace (skills, settings) — not part of the project
+.claude/
