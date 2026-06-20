@@ -7,7 +7,8 @@ from fastapi.templating import Jinja2Templates
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from config import PORTFOLIOS, LOOKBACK_5Y, BENCHMARK_TICKER, DEFAULT_PORTFOLIO
+from config import PORTFOLIOS, LOOKBACK_5Y, BENCHMARK_TICKER, DEFAULT_PORTFOLIO, PORTFOLIO_DISPLAY_ORDER
+from app.routes.portfolio import resolve_positions
 from core.data_fetcher import get_close_series, price_map_freshness
 from core.analytics import (
     portfolio_position_metrics,
@@ -33,7 +34,10 @@ def analytics_page(request: Request, portfolio: str = DEFAULT_PORTFOLIO):
         "request": request,
         "active": "analytics",
         "portfolio": portfolio,
-        "portfolios": list(PORTFOLIOS.keys()),
+        "portfolios": PORTFOLIO_DISPLAY_ORDER + [
+            p for p in PORTFOLIOS
+            if p not in PORTFOLIO_DISPLAY_ORDER and p not in ("core_satellite", "thematic")
+        ],
     })
 
 
@@ -41,7 +45,7 @@ def analytics_page(request: Request, portfolio: str = DEFAULT_PORTFOLIO):
 def analytics_data(request: Request, portfolio: str = DEFAULT_PORTFOLIO):
     """HTMX endpoint: compute analytics and return rendered fragment."""
     try:
-        positions = PORTFOLIOS.get(portfolio, [])
+        positions = resolve_positions(portfolio)
 
         price_map = {}
         for pos in positions:

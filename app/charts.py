@@ -14,21 +14,21 @@ import pandas as pd
 
 
 _DARK_LAYOUT = {
-    "paper_bgcolor": "#161b22",
-    "plot_bgcolor": "#0d1117",
-    "font": {"color": "#c9d1d9", "family": "'JetBrains Mono', monospace", "size": 12},
+    "paper_bgcolor": "#12141b",
+    "plot_bgcolor": "rgba(0,0,0,0)",
+    "font": {"color": "#b9bdcc", "family": "'JetBrains Mono', monospace", "size": 12},
     "margin": {"l": 60, "r": 20, "t": 40, "b": 60},
-    "hoverlabel": {"bgcolor": "#21262d", "bordercolor": "#30363d", "font": {"color": "#e6edf3"}},
+    "hoverlabel": {"bgcolor": "#1a1e2b", "bordercolor": "#232838", "font": {"color": "#e8eaf2"}},
 }
 
-_GREEN  = "#3fb950"
-_RED    = "#f85149"
-_BLUE   = "#58a6ff"
-_GOLD   = "#d29922"
-_PURPLE = "#bc8cff"
-_TEAL   = "#39c5bb"
-_GREY   = "#8b949e"
-_ORANGE = "#f0883e"
+_GREEN  = "#34d399"
+_RED    = "#f87171"
+_BLUE   = "#6c8cff"
+_GOLD   = "#fbbf24"
+_PURPLE = "#a78bfa"
+_TEAL   = "#2dd4bf"
+_GREY   = "#7e8497"
+_ORANGE = "#fb923c"
 
 _LINE_COLOURS = [_BLUE, _GOLD, _GREEN, _RED, _PURPLE, _TEAL, _ORANGE]
 
@@ -68,11 +68,14 @@ def _normalize_slice(s: "pd.Series", common_start, start, rule) -> tuple:
 
 
 def _end_label_annotation(ticker: str, color: str, last_val: float) -> dict:
+    # Two-line label (name over value) keeps long portfolio names like
+    # "checkup_target" inside the right margin instead of clipping.
     sign = "+" if last_val >= 0 else ""
     return {
-        "x": 1.02, "y": last_val, "xref": "paper", "yref": "y",
-        "text": f"<b>{ticker}</b> {sign}{last_val:.1f}%",
+        "x": 1.01, "y": last_val, "xref": "paper", "yref": "y",
+        "text": f"<b>{ticker}</b><br>{sign}{last_val:.1f}%",
         "showarrow": False, "xanchor": "left", "yanchor": "middle",
+        "align": "left",
         "font": {"color": color, "size": 11},
     }
 
@@ -133,10 +136,10 @@ def backtest_chart(data: dict) -> str:
     layout = {
         **_DARK_LAYOUT,
         "title": {"text": "Growth of $100", "font": {"size": 13}},
-        "xaxis": {"gridcolor": "#21262d", "showgrid": True},
-        "yaxis": {"gridcolor": "#21262d", "showgrid": True,
+        "xaxis": {"gridcolor": "#1a1e2b", "showgrid": True},
+        "yaxis": {"gridcolor": "#1a1e2b", "showgrid": True,
                   "tickformat": "$,.0f", "title": "Value ($)"},
-        "legend": {"bgcolor": "#161b22", "bordercolor": "#30363d"},
+        "legend": {"bgcolor": "#12141b", "bordercolor": "#232838"},
         "hovermode": "x unified",
     }
 
@@ -166,13 +169,13 @@ def correlation_heatmap(matrix_data: dict) -> str:
         "text": text,
         "texttemplate": "%{text}",
         "colorscale": [
-            [0.0,  "#f85149"],   # -1  red
-            [0.5,  "#161b22"],   #  0  neutral (surface)
-            [1.0,  "#58a6ff"],   # +1  blue
+            [0.0,  "#f87171"],   # -1  red
+            [0.5,  "#12141b"],   #  0  neutral (surface)
+            [1.0,  "#6c8cff"],   # +1  blue
         ],
         "zmin": -1, "zmax": 1,
         "showscale": True,
-        "colorbar": {"tickfont": {"color": "#c9d1d9"}},
+        "colorbar": {"tickfont": {"color": "#b9bdcc"}},
         "hovertemplate": "%{y} / %{x}<br>corr = %{z:.3f}<extra></extra>",
     }
 
@@ -216,7 +219,7 @@ def theme_bar_chart(themes: list) -> str:
 
     layout = {
         **_DARK_LAYOUT,
-        "xaxis": {"gridcolor": "#21262d", "ticksuffix": "%", "title": "Portfolio Contribution (%)"},
+        "xaxis": {"gridcolor": "#1a1e2b", "ticksuffix": "%", "title": "Portfolio Contribution (%)"},
         "yaxis": {"autorange": "reversed"},
         "height": max(250, len(themes) * 44 + 60),
         "margin": {"l": left_margin, "r": 20, "t": 10, "b": 55},
@@ -258,9 +261,9 @@ def position_performance_chart(price_map: dict, positions: list) -> str:
     layout = {
         **_DARK_LAYOUT,
         "annotations": annotations,
-        "xaxis": {"gridcolor": "#21262d", "type": "date", "rangeslider": {"visible": False}},
-        "yaxis": {"gridcolor": "#21262d", "ticksuffix": "%",
-                  "zeroline": True, "zerolinecolor": "#30363d"},
+        "xaxis": {"gridcolor": "#1a1e2b", "type": "date", "rangeslider": {"visible": False}},
+        "yaxis": {"gridcolor": "#1a1e2b", "ticksuffix": "%",
+                  "zeroline": True, "zerolinecolor": "#232838"},
         "hovermode": "closest",
         "showlegend": False,
         "height": 600,
@@ -353,7 +356,7 @@ def drawdown_chart(port_price, benchmark, port_label: str = "Portfolio") -> str:
         "type": "scatter", "mode": "lines", "name": port_label,
         "x": px, "y": py,
         "line": {"color": _BLUE, "width": 1.5},
-        "fill": "tozeroy", "fillcolor": "rgba(88,166,255,0.12)",
+        "fill": "tozeroy", "fillcolor": "rgba(108,140,255,0.12)",
         "hovertemplate": "%{x}<br>%{y:.2f}%<extra></extra>",
     }]
 
@@ -370,8 +373,8 @@ def drawdown_chart(port_price, benchmark, port_label: str = "Portfolio") -> str:
 
     layout = {
         **_DARK_LAYOUT,
-        "xaxis": {"gridcolor": "#21262d"},
-        "yaxis": {"gridcolor": "#21262d", "ticksuffix": "%"},
+        "xaxis": {"gridcolor": "#1a1e2b"},
+        "yaxis": {"gridcolor": "#1a1e2b", "ticksuffix": "%"},
         "hovermode": "x unified",
         "height": 280,
         "margin": {"l": 60, "r": 20, "t": 20, "b": 40},
@@ -413,15 +416,15 @@ def risk_return_scatter(positions: list, position_metrics: list) -> str:
         "type": "scatter", "mode": "markers",
         "x": x_vals, "y": y_vals,
         "marker": {"size": sizes, "color": _BLUE, "opacity": 0.72,
-                   "line": {"color": "#58a6ff", "width": 1.5}},
+                   "line": {"color": "#6c8cff", "width": 1.5}},
         "hovertext": hover,
         "hovertemplate": "%{hovertext}<extra></extra>",
     }
 
     layout = {
         **_DARK_LAYOUT,
-        "xaxis": {"gridcolor": "#21262d", "title": "Volatility (%)", "ticksuffix": "%"},
-        "yaxis": {"gridcolor": "#21262d", "title": "1Y Return (%)", "ticksuffix": "%"},
+        "xaxis": {"gridcolor": "#1a1e2b", "title": "Volatility (%)", "ticksuffix": "%"},
+        "yaxis": {"gridcolor": "#1a1e2b", "title": "1Y Return (%)", "ticksuffix": "%"},
         "showlegend": False,
         "height": 300,
         "margin": {"l": 60, "r": 20, "t": 20, "b": 60},
@@ -455,9 +458,9 @@ def trailing_returns_bar(position_metrics: list) -> str:
 
     layout = {
         **_DARK_LAYOUT,
-        "xaxis": {"gridcolor": "#21262d"},
-        "yaxis": {"gridcolor": "#21262d", "ticksuffix": "%",
-                  "zeroline": True, "zerolinecolor": "#30363d"},
+        "xaxis": {"gridcolor": "#1a1e2b"},
+        "yaxis": {"gridcolor": "#1a1e2b", "ticksuffix": "%",
+                  "zeroline": True, "zerolinecolor": "#232838"},
         "barmode": "group",
         "hovermode": "x unified",
         "legend": {"bgcolor": "rgba(0,0,0,0)", "bordercolor": "rgba(0,0,0,0)"},
@@ -515,7 +518,7 @@ def allocation_treemap(positions: list, position_metrics: list) -> str:
         "texttemplate": "<b>%{label}</b><br>%{value:.1f}%<br>%{customdata}",
         "hovertemplate": "%{label}<br>Weight: %{value:.1f}%<br>1Y: %{customdata}<extra></extra>",
         "marker": {
-            "colorscale": [[0, _RED], [0.5, "#21262d"], [1, _GREEN]],
+            "colorscale": [[0, _RED], [0.5, "#1a1e2b"], [1, _GREEN]],
             "showscale": False,
         },
     }

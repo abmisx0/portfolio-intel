@@ -10,7 +10,25 @@ from fastapi.templating import Jinja2Templates
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from config import PORTFOLIOS, LOOKBACK_5Y, LOOKBACK_ALL, BENCHMARK_TICKER, BENCHMARK_SPX, DEFAULT_PORTFOLIO, PORTFOLIO_DISPLAY_ORDER
+import logging
+
+from config import PORTFOLIOS, LOOKBACK_5Y, LOOKBACK_ALL, BENCHMARK_TICKER, BENCHMARK_SPX, DEFAULT_PORTFOLIO, PORTFOLIO_DISPLAY_ORDER, resolve_portfolio
+
+logger = logging.getLogger(__name__)
+
+
+def resolve_positions(name: str) -> list[dict]:
+    """Portfolio lookup that also supports the reserved 'live' name.
+
+    Returns [] when the name is unknown or live resolution fails (e.g.
+    Robinhood login unavailable in the server process) — pages render an
+    empty state instead of crashing.
+    """
+    try:
+        return resolve_portfolio(name)
+    except Exception as exc:
+        logger.warning("could not resolve portfolio %r: %s", name, exc)
+        return []
 from core.data_fetcher import get_close_series, price_map_freshness
 from core.analytics import (
     portfolio_position_metrics,
@@ -45,7 +63,7 @@ BENCHMARK = BENCHMARK_TICKER
 
 def _fetch_portfolio_series(port_name: str) -> pd.Series | None:
     """Fetch price data and compute full-history cumprod series for one portfolio."""
-    positions = PORTFOLIOS.get(port_name, [])
+    positions = resolve_positions(port_name)
     if not positions:
         return None
     price_map: dict = {}
@@ -63,9 +81,15 @@ def _fetch_portfolio_series(port_name: str) -> pd.Series | None:
 
 @router.get("/")
 def overview(request: Request, portfolio: str = DEFAULT_PORTFOLIO):
-    positions = PORTFOLIOS.get(portfolio, [])
+    positions = resolve_positions(portfolio)
     if not positions and portfolio != DEFAULT_PORTFOLIO:
         return RedirectResponse(url=f"/?portfolio={DEFAULT_PORTFOLIO}", status_code=302)
+    # Live resolution can fail (Robinhood login unavailable in server process) —
+    # fall back to the first named alternative rather than a blank page.
+    if not positions and portfolio == DEFAULT_PORTFOLIO:
+        fallback = next((p for p in PORTFOLIO_DISPLAY_ORDER if p in PORTFOLIOS), None)
+        if fallback:
+            return RedirectResponse(url=f"/?portfolio={fallback}", status_code=302)
 
     full_price_map: dict = {}
     for pos in positions:
@@ -122,13 +146,21 @@ def overview(request: Request, portfolio: str = DEFAULT_PORTFOLIO):
             _sync_days = None
 
     pinned = PORTFOLIO_DISPLAY_ORDER
-    sorted_portfolios = pinned + [p for p in PORTFOLIOS.keys() if p not in pinned]
+    # Hide the repo's getting-started examples once personal portfolios exist.
+    others = [p for p in PORTFOLIOS.keys() if p not in pinned]
+    personal = [p for p in others if p not in ("core_satellite", "thematic")]
+    sorted_portfolios = pinned + (personal if personal else others)
 
     portfolio_compositions = {
         name: [{"ticker": p["ticker"].upper(), "weight": p["weight"], "theme": p["theme"]}
                for p in pos]
         for name, pos in PORTFOLIOS.items()
     }
+    if positions and portfolio not in portfolio_compositions:
+        portfolio_compositions[portfolio] = [
+            {"ticker": p["ticker"].upper(), "weight": p["weight"], "theme": p.get("theme", "Other")}
+            for p in positions
+        ]
 
     return templates.TemplateResponse("index.html", {
         "request": request,
@@ -156,7 +188,7 @@ def overview(request: Request, portfolio: str = DEFAULT_PORTFOLIO):
 @router.post("/api/sync")
 def sync_data(portfolio: str = DEFAULT_PORTFOLIO):
     """Re-fetch latest price data for all positions, compute analytics delta, save insight."""
-    positions = PORTFOLIOS.get(portfolio, [])
+    positions = resolve_positions(portfolio)
     if not positions:
         return Response(content=json.dumps({"error": "unknown portfolio"}),
                         media_type="application/json", status_code=404)

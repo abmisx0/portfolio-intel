@@ -18,7 +18,7 @@
         <label>Portfolio</label>
         <select class="form-control" name="portfolio">
           {% for p in portfolios %}
-          <option value="{{ p }}" {% if p == 'proposed' %}selected{% endif %}>{{ p }}</option>
+          <option value="{{ p }}" {% if loop.first %}selected{% endif %}>{{ p }}</option>
           {% endfor %}
         </select>
       </div>
@@ -34,7 +34,7 @@
         Current Allocations <span class="muted">(optional — enables drift analysis)</span>
       </label>
       <input class="form-control" name="current" style="width:100%;max-width:600px"
-             placeholder="e.g. VOO:0.32,NLR:0.13,SMH:0.14,GOAU:0.09,XLRE:0.11,LIT:0.05,VDE:0.06,QTUM:0.03">
+             placeholder="e.g. VOO:0.48,QQQ:0.32,GLD:0.10,BND:0.05,VNQ:0.05">
       <p class="muted" style="font-size:0.78rem;margin-top:0.3rem">
         Format: TICKER:weight,... — weights as decimals (0.30 = 30%). If omitted, shows target allocation only.
       </p>

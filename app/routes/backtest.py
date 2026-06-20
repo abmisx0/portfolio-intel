@@ -27,8 +27,8 @@ def backtest_page(request: Request):
 @router.post("/backtest/results", response_class=HTMLResponse)
 def backtest_results(
     request: Request,
-    portfolio_a: str = Form("proposed"),
-    portfolio_b: str = Form("previous"),
+    portfolio_a: str = Form("core_satellite"),
+    portfolio_b: str = Form("thematic"),
     start: str = Form("2020-01-01"),
     end: str = Form(None),
     benchmark: bool = Form(True),

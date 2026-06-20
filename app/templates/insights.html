@@ -4,11 +4,12 @@
 {% block content %}
 <div class="page-header">
   <h1>Insights</h1>
+  <span class="muted" style="font-size:0.85rem;">Checkup reports &amp; sync notes — newest first</span>
 </div>
 
 {% if not entries %}
 <div class="card">
-  <p style="color:var(--muted); font-size:0.875rem;">No insights yet. Hit <strong>Sync</strong> on the Overview page to generate your first analysis note.</p>
+  <p class="muted" style="font-size:0.875rem;">No insights yet. Run <code>/portfolio-checkup</code> or hit <strong>Sync</strong> on the Overview page to generate your first analysis note.</p>
 </div>
 {% else %}
 {% for e in entries %}
@@ -19,7 +20,18 @@
     {% if e.portfolio %}<span class="badge">{{ e.portfolio }}</span>{% endif %}
   </div>
   <div class="insight-title">{{ e.title }}</div>
+  {% if e.chips %}
+  <div class="insight-metrics">
+    {% for c in e.chips %}
+    <span class="badge">{{ c.label }}&nbsp;<strong>{{ c.value }}</strong></span>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if e.body_html %}
+  <div class="insight-body-html">{{ e.body_html | safe }}</div>
+  {% else %}
   <pre class="insight-body">{{ e.body }}</pre>
+  {% endif %}
 </div>
 {% endfor %}
 {% endif %}

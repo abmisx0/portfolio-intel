@@ -27,7 +27,7 @@ def screener_page(request: Request):
 def screener_results(
     request: Request,
     ticker: str = Form(...),
-    portfolio: str = Form("proposed"),
+    portfolio: str = Form("core_satellite"),
     allocation: float = Form(0.05),
 ):
     try:

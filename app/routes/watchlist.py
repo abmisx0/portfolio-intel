@@ -45,7 +45,7 @@ def watchlist_remove(request: Request, ticker: str = Form(...)):
 
 
 @router.get("/watchlist/screen/{ticker}", response_class=HTMLResponse)
-def watchlist_screen_one(request: Request, ticker: str, portfolio: str = "proposed"):
+def watchlist_screen_one(request: Request, ticker: str, portfolio: str = "core_satellite"):
     try:
         data = screen(ticker.upper(), portfolio_name=portfolio)
         return templates.TemplateResponse("partials/screen_results.html", {

@@ -102,11 +102,11 @@
   <div class="card-title">Position Performance (normalized %)</div>
   <div class="perf-header">
     <div class="perf-periods" id="perf-period-btns">
-      <button class="perf-btn active" data-period="ALL">ALL</button>
+      <button class="perf-btn" data-period="ALL">ALL</button>
       <button class="perf-btn" data-period="10Y">10Y</button>
       <button class="perf-btn" data-period="5Y">5Y</button>
       <button class="perf-btn" data-period="3Y">3Y</button>
-      <button class="perf-btn" data-period="1Y">1Y</button>
+      <button class="perf-btn active" data-period="1Y">1Y</button>
       <button class="perf-btn" data-period="YTD">YTD</button>
       <button class="perf-btn" data-period="6M">6M</button>
       <button class="perf-btn" data-period="3M">3M</button>
@@ -261,7 +261,7 @@
   document.addEventListener('DOMContentLoaded', function () {
     const _cfg = {responsive: true, displayModeBar: false, scrollZoom: false};
 
-    var _C_BLUE = '#58a6ff', _C_GREY = '#8b949e', _C_GOLD = '#d29922';
+    var _C_BLUE = '#6c8cff', _C_GREY = '#7e8497', _C_GOLD = '#fbbf24';
     var _plotLayout = {
       paper_bgcolor:'#161b22', plot_bgcolor:'#0d1117',
       font:{color:'#c9d1d9', family:"'JetBrains Mono', monospace", size:12},
@@ -277,7 +277,7 @@
     Plotly.react('perf-chart', perfData.data, perfData.layout, _cfg);
 
     const _pd = {{ perf_data_json | safe }};
-    var _perfPeriod = 'ALL', _perfRes = 'Daily';
+    var _perfPeriod = '1Y', _perfRes = 'Daily';
 
     // Snapshot trace shells (type/mode/name/line/hovertemplate) without x/y data.
     // Rebuilding from shells on every Plotly.react call avoids Plotly's internal
@@ -346,9 +346,10 @@
 
     function _annLabel(name, y, color) {
       return {
-        x: 1.02, y: y, xref: 'paper', yref: 'y',
-        text: '<b>' + name + '</b> ' + (y >= 0 ? '+' : '') + y.toFixed(1) + '%',
-        showarrow: false, xanchor: 'left', yanchor: 'middle',
+        x: 1.01, y: y, xref: 'paper', yref: 'y',
+        // two-line label: long portfolio names stay inside the right margin
+        text: '<b>' + name + '</b><br>' + (y >= 0 ? '+' : '') + y.toFixed(1) + '%',
+        showarrow: false, xanchor: 'left', yanchor: 'middle', align: 'left',
         font: {color: color, size: 11}
       };
     }

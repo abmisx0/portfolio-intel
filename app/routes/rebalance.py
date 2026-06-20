@@ -26,7 +26,7 @@ def rebalance_page(request: Request):
 @router.post("/rebalance/results", response_class=HTMLResponse)
 def rebalance_results(
     request: Request,
-    portfolio: str = Form("proposed"),
+    portfolio: str = Form("core_satellite"),
     value: float = Form(...),
     current: str = Form(""),
 ):
