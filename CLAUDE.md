@@ -128,6 +128,34 @@ python3 -m cli valuation SMH NVDA --format json
 ```
 Output: trailing/forward P/E, P/S, P/B, EV/EBITDA, profit margin, dividend yield, market cap for stocks; fund-level P/E / P/B / P/S, expense ratio, AUM for ETFs. yfinance unit quirks (percent-vs-fraction yields, reciprocal fund ratios) are normalised in `core/valuation.py` so output is always consistent. Results cached in SQLite for 1 day. Use this as context alongside risk metrics — a trim/add signal reads differently at 9x forward earnings than at 60x.
 
+### `growth` — Consensus forward revenue/EPS growth
+```bash
+python3 -m cli growth NFLX LLY NVDA
+python3 -m cli growth --portfolio live
+python3 -m cli growth SMH --format json     # ETFs return no estimates — see note
+```
+Output: consensus revenue and EPS growth for the current (FY0) and next (FY1)
+fiscal year, long-term growth (LTG) when published, forward P/E, **PEG**
+(fwd P/E ÷ LTG, falling back to FY1 EPS growth — the JSON `peg_basis` field
+records which), profit margin, analyst count, and the S&P 500 LTG baseline for
+comparison. Results cached in SQLite for 1 day; info-derived fields are shared
+with the `valuation` cache (one .info fetch per ticker per day). Transient
+fetch failures are reported and **not** cached; no-coverage tickers are.
+ETFs carry no consensus estimates — run `growth` on their top holdings instead
+(get them from `screen`). **Reading caveats**: PEG breaks on rebound years
+(COIN-style −75%→+338% swings make PEG meaningless), FY0 can hide one-time items
+(e.g. a breakup fee inflating the base year), and estimates with <10 analysts are
+noise. Pair with `earnings` (beat/miss history) to judge whether consensus is
+credible: a rich PEG with consistent beats reads differently than one with misses.
+
+### `earnings` — EPS surprise history and forward estimates
+```bash
+python3 -m cli earnings NVDA MU --quarters 4
+python3 -m cli earnings AAPL --forward      # forward estimates need Finnhub paid plan
+```
+Historical EPS beats/misses (Finnhub). Use alongside `growth`: surprise history
+is the execution-quality check on consensus estimates.
+
 ### `macro` — Market regime snapshot
 ```bash
 python3 -m cli macro

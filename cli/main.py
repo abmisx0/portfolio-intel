@@ -36,6 +36,7 @@ from cli.commands.publish import publish_cmd
 from cli.commands.insider import insider_cmd
 from cli.commands.news import news_cmd
 from cli.commands.earnings import earnings_cmd
+from cli.commands.growth import growth_cmd
 
 
 @click.group()
@@ -66,6 +67,7 @@ cli.add_command(publish_cmd, name="publish")
 cli.add_command(insider_cmd, name="insider")
 cli.add_command(news_cmd, name="news")
 cli.add_command(earnings_cmd, name="earnings")
+cli.add_command(growth_cmd, name="growth")
 
 
 @cli.command()

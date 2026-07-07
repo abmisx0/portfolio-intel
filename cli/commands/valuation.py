@@ -6,17 +6,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import click
 from tabulate import tabulate
 
-from cli.formatters import build_envelope, print_json
+from cli.formatters import build_envelope, print_json, fmt_pct, fmt_mult
 from config import PORTFOLIOS, resolve_portfolio
 from core.valuation import get_valuation_multi
-
-
-def _x(v) -> str:
-    return f"{v:.1f}x" if v is not None else "—"
-
-
-def _pct(v) -> str:
-    return f"{v * 100:.2f}%" if v is not None else "—"
 
 
 def _cap(v) -> str:
@@ -36,10 +28,10 @@ def _print_valuation_table(results: list) -> None:
     if stocks:
         click.echo("\n  Stocks — valuation multiples")
         rows = [
-            [r["ticker"], _x(r.get("trailing_pe")), _x(r.get("forward_pe")),
-             _x(r.get("price_to_sales")), _x(r.get("price_to_book")),
-             _x(r.get("ev_to_ebitda")), _pct(r.get("profit_margin")),
-             _pct(r.get("dividend_yield")), _cap(r.get("market_cap"))]
+            [r["ticker"], fmt_mult(r.get("trailing_pe")), fmt_mult(r.get("forward_pe")),
+             fmt_mult(r.get("price_to_sales")), fmt_mult(r.get("price_to_book")),
+             fmt_mult(r.get("ev_to_ebitda")), fmt_pct(r.get("profit_margin")),
+             fmt_pct(r.get("dividend_yield")), _cap(r.get("market_cap"))]
             for r in stocks
         ]
         click.echo(tabulate(
@@ -52,9 +44,9 @@ def _print_valuation_table(results: list) -> None:
     if funds:
         click.echo("\n  Funds — portfolio-level multiples")
         rows = [
-            [r["ticker"], _x(r.get("fund_pe")), _x(r.get("fund_pb")),
-             _x(r.get("fund_ps")), _pct(r.get("expense_ratio")),
-             _pct(r.get("dividend_yield")), _cap(r.get("aum"))]
+            [r["ticker"], fmt_mult(r.get("fund_pe")), fmt_mult(r.get("fund_pb")),
+             fmt_mult(r.get("fund_ps")), fmt_pct(r.get("expense_ratio")),
+             fmt_pct(r.get("dividend_yield")), _cap(r.get("aum"))]
             for r in funds
         ]
         click.echo(tabulate(

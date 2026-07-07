@@ -66,6 +66,19 @@ def _f2(v) -> str:
     return f"{v:.4f}"
 
 
+def fmt_pct(v, decimals: int = 2, signed: bool = False) -> str:
+    """Fraction → percent string ('12.34%'); em-dash when None."""
+    if v is None:
+        return "—"
+    sign = "+" if signed else ""
+    return f"{v * 100:{sign}.{decimals}f}%"
+
+
+def fmt_mult(v) -> str:
+    """Ratio → '12.3x'; em-dash when None."""
+    return f"{v:.1f}x" if v is not None else "—"
+
+
 def _to_sector_map(sectors: list) -> dict:
     """Return {sector: weight} for sectors with weight > 0.001, preserving sort order."""
     return {s["sector"]: s["weight"] for s in sectors if s.get("weight", 0) > 0.001}
