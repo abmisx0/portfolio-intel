@@ -92,6 +92,26 @@ Computes your **actual realized money-weighted return (XIRR)** from Robinhood or
 
 **Coverage caveat is structural, not optional.** Robinhood's `get_all_stock_orders()` only returns recent orders, and ACATS-transferred positions have no order record at all. `core/performance.py` reconciles per-ticker order shares vs. currently-held shares and computes the XIRR only over the **covered sleeve** (shares the orders actually pay for), reporting the coverage ratio and listing excluded positions. A low coverage ratio means the number describes only a slice of the book — read the printed caveats. Equity only (options/cash excluded); $0-cost grants (free shares) carry no cash flow and are excluded.
 
+### `realized` — Realized gains, income, and margin cost for a tax year
+```bash
+python3 -m cli realized                 # current tax year
+python3 -m cli realized --year 2025
+python3 -m cli realized --format json
+```
+Requires Robinhood login. Reconstructs the tax year read-only from four
+history sources: stock orders (FIFO lot matching with ST/LT split by matched-lot
+holding period), **option order history at leg-execution level** (roll orders mix
+open+close legs, so premium is attributed per leg), **option events**
+(assignments/expirations — these never appear as orders; assignment equity
+components flow into the stock FIFO), and dividends/interest/margin-interest
+records. Output: ST/LT capital gains, per-sale and per-contract detail,
+investment income net of margin interest, and collected-but-unrealized premium
+on open contracts. **Read the caveats it prints**: wash sales are not modeled,
+transferred-in shares have no basis (their P/L is excluded and flagged), and
+Robinhood's pagination truncates silently — the app's Tax Center is ground truth.
+Use before any tax-ordered trade list: losses offset the short-term option
+premium (taxed at ordinary rates) first.
+
 ### `exposure` — Delta-adjusted exposure (equity + options)
 ```bash
 python3 -m cli exposure
