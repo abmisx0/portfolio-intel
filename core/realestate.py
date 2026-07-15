@@ -72,6 +72,8 @@ _FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}"
 
 DESMOOTH_FACTOR = 1.6      # Geltner-style unsmoothing multiplier on index vol
 IDIOSYNCRATIC_VOL = 0.10   # single-home vol component beyond the metro index
+BREAKEVEN_LO = -0.05       # breakeven-appreciation bisection search bounds —
+BREAKEVEN_HI = 0.15        # renderers import these; don't re-encode the values
 
 
 # ── Data layer ─────────────────────────────────────────────────────────────────
@@ -505,12 +507,12 @@ def _breakeven_appreciation(inp: PropertyInputs, months: int,
         prop = sim["sale_net_after_tax"] + bench["side_pocket_terminal"]
         return prop - bench["benchmark_terminal"]
 
-    lo, hi = -0.05, 0.15
+    lo, hi = BREAKEVEN_LO, BREAKEVEN_HI
     try:
         if wealth_gap(lo) > 0:
-            return lo   # property wins even at -5%/yr
+            return lo   # property wins even at the lower search bound
         if wealth_gap(hi) < 0:
-            return None  # can't win within +15%/yr
+            return None  # can't win within the upper search bound
         for _ in range(40):
             mid = (lo + hi) / 2
             if wealth_gap(mid) > 0:
@@ -520,3 +522,68 @@ def _breakeven_appreciation(inp: PropertyInputs, months: int,
         return (lo + hi) / 2
     except Exception:
         return None
+
+
+# ── Buy-vs-rent verdict for a specific listing ─────────────────────────────────
+
+def buy_vs_rent(inp: PropertyInputs, holds: tuple = (5, 10, 20)) -> dict:
+    """Should I buy this listing or keep renting it and invest the difference?
+
+    Owner-occupied framing (primary=True is applied to per-hold copies; the
+    caller's `inp` is never mutated): `inp.rent` is the market rent of the
+    SAME unit (imputed rent). For each hold, runs the forecast comparison of
+    buying vs renting-and-investing identical out-of-pocket dollars at
+    `inp.benchmark_return` — the invested alternative is defined by that
+    assumed return, not by a benchmark ticker (forecast mode has no real
+    prices). Also returns the monthly own-vs-rent cost split and the
+    price-to-rent ratio with its conventional zone.
+    """
+    if inp.rent <= 0:
+        raise ValueError("buy_vs_rent requires the unit's market rent (> 0)")
+    loan = inp.price * (1 - inp.down_pct)
+    pay = monthly_payment(loan, inp.rate, inp.term_years)
+    carry = (inp.price * (inp.property_tax + inp.insurance + inp.maintenance
+                          + inp.capex) / 12 + inp.hoa_monthly)
+    own_monthly = pay + carry
+    p2r = inp.price / (inp.rent * 12) if inp.rent else None
+    if p2r is None:
+        zone = "unknown"
+    elif p2r < 18:
+        zone = "buy-leaning"
+    elif p2r <= 22:
+        zone = "gray zone"
+    else:
+        zone = "rent-leaning"
+
+    scenarios = []
+    for hold in holds:
+        run = PropertyInputs(**{**inp.__dict__, "hold_years": float(hold),
+                                "primary": True})
+        r = analyze(run, "forecast")
+        scenarios.append({
+            "hold_years": hold,
+            "own_terminal": r["property"]["terminal_wealth"],
+            "rent_invest_terminal": r["benchmark_alt"]["terminal_wealth"],
+            "own_irr": r["property"]["irr"],
+            "breakeven_appreciation": r.get("breakeven_appreciation"),
+            "assumed_appreciation": r["assumed_appreciation"],
+        })
+
+    votes_buy = sum(1 for s in scenarios
+                    if (s["own_terminal"] or 0) > (s["rent_invest_terminal"] or 0))
+    return {
+        "price": inp.price, "rent": inp.rent, "metro": inp.metro,
+        "assumed_benchmark_return": inp.benchmark_return,
+        "appreciation_overridden": inp.appreciation is not None,
+        "monthly": {
+            "mortgage_payment": pay,
+            "carry_costs": carry,
+            "own_total": own_monthly,
+            "rent": inp.rent,
+            "premium_to_own": own_monthly - inp.rent,
+        },
+        "price_to_rent": p2r, "price_to_rent_zone": zone,
+        "scenarios": scenarios,
+        "verdict": "BUY" if votes_buy > len(scenarios) / 2 else "RENT",
+        "votes_buy": votes_buy, "votes_total": len(scenarios),
+    }

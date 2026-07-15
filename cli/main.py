@@ -39,6 +39,7 @@ from cli.commands.earnings import earnings_cmd
 from cli.commands.growth import growth_cmd
 from cli.commands.realized import realized_cmd
 from cli.commands.property import property_cmd
+from cli.commands.buyrent import buyrent_cmd
 
 
 @click.group()
@@ -72,6 +73,7 @@ cli.add_command(earnings_cmd, name="earnings")
 cli.add_command(growth_cmd, name="growth")
 cli.add_command(realized_cmd, name="realized")
 cli.add_command(property_cmd, name="property")
+cli.add_command(buyrent_cmd, name="buyrent")
 
 
 @cli.command()

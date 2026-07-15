@@ -159,6 +159,21 @@ understates single-house risk. Defaults follow 2026 norms (0.9% property tax,
 ~5.5% post-NAR commissions inside the 7%). Read the caveats: federal-only,
 no state tax/SALT/AMT, no cost-seg bonus depreciation, not tax advice.
 
+### `buyrent` — Should I buy this specific listing?
+```bash
+python3 -m cli buyrent --price 1500000 --rent 4800 --metro "Los Angeles, CA" --hoa 550
+python3 -m cli buyrent --price 700000 --rent 3000 --benchmark-return 11 --format json
+```
+Owner-occupied buy-vs-rent verdict for one listing: `--rent` is what the **same
+unit** rents for (imputed rent). Prints the monthly own-vs-rent cost split,
+the price-to-rent ratio with its conventional zone (<18 buy-leaning, >22
+rent-leaning), and BUY-vs-RENT terminal wealth across 5/10/20-year holds with
+the breakeven appreciation per horizon — appreciation defaults to the metro's
+10-year CAGR. Thin wrapper over the `property` forecast engine (same tax and
+comparison model; §121 applies at 2+ years). The verdict is financial only —
+it prices stability/roots at $0 and assumes the monthly difference is
+actually invested.
+
 ### `analysts` — Analyst consensus and price targets
 ```bash
 python3 -m cli analysts MU AVGO TSM
@@ -203,6 +218,25 @@ python3 -m cli earnings AAPL --forward      # forward estimates need Finnhub pai
 Historical EPS beats/misses (Finnhub). Use alongside `growth`: surprise history
 is the execution-quality check on consensus estimates.
 
+### `insider` — Insider transaction filings
+```bash
+python3 -m cli insider NVDA MU
+python3 -m cli insider AAPL --buys-only
+```
+SEC Form 4 insider transactions (Finnhub) — date, insider name, transaction
+type, shares, price, value. `--buys-only` filters to open-market purchases.
+`--limit` caps rows per ticker (default 10).
+
+### `news` — Company news and sentiment
+```bash
+python3 -m cli news NVDA MU --days 14
+python3 -m cli news AAPL --headlines-only
+```
+Recent headlines (Finnhub) with an aggregate bullish/bearish sentiment score
+vs. sector average when available. `--headlines-only` skips the sentiment
+call; sentiment requires a Finnhub paid plan and degrades gracefully (noted
+in output) when unavailable.
+
 ### `macro` — Market regime snapshot
 ```bash
 python3 -m cli macro
@@ -228,6 +262,16 @@ python3 -m cli watchlist remove TICKER
 ```bash
 python3 -m cli alerts --portfolio my_portfolio
 ```
+
+### `publish` — Push a report to the dashboard
+```bash
+python3 -m cli publish --title "Portfolio Checkup — 2026-06-12" --body-file report.md
+python3 -m cli publish --title "..." --body-file report.md --metrics '{"sharpe_3y": 1.89}'
+```
+Saves a markdown report as an Insights entry on the web dashboard and posts it
+to Discord (`DISCORD_WEBHOOK_URL`). `--metrics` is an optional JSON dict of
+headline numbers to surface on the Insights card. Used by the `/portfolio-checkup`
+skill to publish the final report after a review.
 
 ### Web dashboard
 ```bash
@@ -295,6 +339,14 @@ portfolio-intel/
 │   ├── broker.py              # Robinhood integration — read-only via robin_stocks
 │   ├── research.py            # Advisory scoring engine
 │   ├── valuation.py           # Valuation multiples (P/E, P/S, EV/EBITDA; fund-level for ETFs)
+│   ├── growth.py              # Consensus forward revenue/EPS growth, PEG vs S&P baseline
+│   ├── exposure.py            # Delta-adjusted exposure, Black-Scholes + Robinhood-native Greeks
+│   ├── performance.py         # Money-weighted (XIRR) realized return vs index benchmarks
+│   ├── realized.py            # Realized gains/income/margin cost for a tax year (FIFO + option ledger)
+│   ├── realestate.py          # Zillow/FRED fetchers, amortization, leveraged property tax model
+│   ├── analysts.py            # Analyst consensus and price targets
+│   ├── technicals.py          # SMA/RSI/52w range/support-resistance from price cache
+│   ├── finnhub.py             # Finnhub client — insider, news, earnings, ETF constituents
 │   ├── cache.py               # Shared SQLite JSON cache (cached_json)
 │   ├── watchlist.py           # Watchlist persistence
 │   ├── alerts.py              # Correlation/threshold alerts

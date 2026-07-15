@@ -68,8 +68,8 @@ def _normalize_slice(s: "pd.Series", common_start, start, rule) -> tuple:
 
 
 def _end_label_annotation(ticker: str, color: str, last_val: float) -> dict:
-    # Two-line label (name over value) keeps long portfolio names like
-    # "checkup_target" inside the right margin instead of clipping.
+    # Two-line label (name over value) keeps long portfolio names
+    # (e.g. "core_satellite") inside the right margin instead of clipping.
     sign = "+" if last_val >= 0 else ""
     return {
         "x": 1.01, "y": last_val, "xref": "paper", "yref": "y",

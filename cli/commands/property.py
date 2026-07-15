@@ -10,7 +10,8 @@ from tabulate import tabulate
 
 from cli.formatters import build_envelope, print_json, fmt_pct
 from config import BENCHMARKS
-from core.realestate import PropertyInputs, analyze, mortgage_rate_at
+from core.realestate import (BREAKEVEN_HI, BREAKEVEN_LO, PropertyInputs,
+                             analyze, mortgage_rate_at)
 
 
 def _money(v) -> str:
@@ -50,11 +51,13 @@ def _print_table(r: dict) -> None:
     if r["mode"] == "forecast":
         be = r.get("breakeven_appreciation")
         if be is None:
-            click.echo(f"  Breakeven appreciation vs {r['benchmark']}: >15%/yr "
-                       "(property cannot win under these assumptions).")
-        elif be <= -0.05 + 1e-9:
-            click.echo(f"  Breakeven appreciation vs {r['benchmark']}: ≤ -5%/yr "
-                       "(property wins even at the -5%/yr search bound).")
+            click.echo(f"  Breakeven appreciation vs {r['benchmark']}: "
+                       f">{BREAKEVEN_HI * 100:.0f}%/yr (property cannot win "
+                       "under these assumptions).")
+        elif be <= BREAKEVEN_LO + 1e-9:
+            click.echo(f"  Breakeven appreciation vs {r['benchmark']}: "
+                       f"≤ {BREAKEVEN_LO * 100:.0f}%/yr (property wins even at "
+                       "the lower search bound).")
         else:
             click.echo(f"  Breakeven appreciation vs {r['benchmark']}: "
                        f"{fmt_pct(be)}/yr — property wins above this, loses below.")

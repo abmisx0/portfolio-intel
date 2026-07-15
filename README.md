@@ -30,12 +30,14 @@ All market data flows through a SQLite cache backed by yfinance — no paid data
 | `exposure` | Delta-adjusted exposure across equity + options (folds option delta into economic weights) |
 | `performance` | Money-weighted (XIRR) realized return vs index benchmarks, from actual order history |
 | `advise` | Full advisory: trim signals, watchlist screening, discovery suggestions |
+| `realized` | Realized capital gains, income, and margin cost for a tax year, from order/event history |
 
 **Market data & research**
 
 | Command | What it does |
 |---------|-------------|
 | `valuation` | Valuation multiples — P/E, P/S, P/B, EV/EBITDA (stocks); fund-level ratios (ETFs) |
+| `growth` | Consensus forward revenue/EPS growth (FY0/FY1), long-term growth, and PEG vs the S&P baseline |
 | `analysts` | Analyst consensus, price targets, and recent rating changes |
 | `technicals` | SMA50/200, RSI(14), 52-week range, swing support/resistance |
 | `macro` | Market regime snapshot — VIX, index levels, commodities, Treasury curve, risk-free rate |
@@ -43,6 +45,13 @@ All market data flows through a SQLite cache backed by yfinance — no paid data
 | `news` | Company news with aggregate sentiment scoring (Finnhub) |
 | `earnings` | EPS surprises and forward analyst estimates (Finnhub) |
 | `watchlist` | Manage a list of candidate ETFs |
+
+**Real estate**
+
+| Command | What it does |
+|---------|-------------|
+| `property` | Leveraged real-estate backtest/forecast vs an index, after tax, equal out-of-pocket dollars both sides |
+| `buyrent` | Owner-occupied buy-vs-rent verdict for a specific listing, with breakeven appreciation |
 
 **Web**
 
@@ -220,6 +229,23 @@ Three sections:
 
 Add `-d`/`--delta-adjusted` to reason on economic (option-delta-folded) exposure; `--lookback {1Y,3Y,5Y,10Y}` re-runs the simulation over a different window to test signal stability.
 
+### `property` — Leveraged real-estate purchase vs an index, after tax
+
+```bash
+python3 -m cli property --price 450000 --rent 2600 --metro "Austin, TX" --backtest-start 2016-07
+python3 -m cli property --price 450000 --rent 2600 --metro "Austin, TX" --hold 10 --niit
+```
+
+Simulates a leveraged property month-by-month (amortization, vacancy, maintenance/capex/insurance/tax, management, HOA) with a full federal tax layer (depreciation, passive-loss carryforward, recapture, LTCG) and compares **equal out-of-pocket dollars** into a benchmark, both sides after tax. Data from Zillow metro ZHVI/ZORI and FRED (both free, keyless). `--backtest-start` runs on actual historical metro/benchmark paths; without it, `property` forecasts off metro-CAGR defaults and prints the **breakeven appreciation** — the annual appreciation above which the property beats the index.
+
+### `buyrent` — Should I buy this specific listing?
+
+```bash
+python3 -m cli buyrent --price 1500000 --rent 4800 --metro "Los Angeles, CA" --hoa 550
+```
+
+Owner-occupied buy-vs-rent verdict for one listing (`--rent` = the same unit's market rent). Prints the monthly own-vs-rent cost split, the price-to-rent ratio with its conventional zone (<18 buy-leaning, >22 rent-leaning), and BUY-vs-RENT terminal wealth across 5/10/20-year holds with the breakeven appreciation per horizon. Thin wrapper over the `property` forecast engine.
+
 ### `exposure` — Delta-adjusted exposure (equity + options)
 
 ```bash
@@ -236,6 +262,15 @@ python3 -m cli performance [--benchmark voo|spx|nasdaq|russell ...] [--format js
 
 Computes your **actual money-weighted return (XIRR)** from Robinhood order history — every filled buy/sell becomes a dated cash flow — and compares it against the same contributions *cloned into each index* (VOO/QQQ/IWM by default). Holding contribution timing fixed isolates asset choice, unlike the constant-weight `backtest`. Reconciles per-ticker order shares against current holdings and reports the XIRR only over the **covered sleeve** (positions the order history accounts for), with a coverage ratio — transferred-in (ACATS) or pre-window positions are excluded. Equity only.
 
+### `realized` — Realized gains, income, and margin cost for a tax year
+
+```bash
+python3 -m cli realized --year 2026
+python3 -m cli realized --format json
+```
+
+Reconstructs a tax year read-only from Robinhood history: stock orders (FIFO lot matching with ST/LT split), option order history at leg-execution level, option events (assignments/expirations folded into stock cost basis per 1099 rules), and dividends/interest/margin-interest records. Output: ST/LT capital gains, per-sale and per-contract detail, investment income net of margin interest. Requires Robinhood login; read the printed caveats (wash sales not modeled, transferred-in shares have no basis).
+
 ### `valuation` — Valuation multiples
 
 ```bash
@@ -244,6 +279,15 @@ python3 -m cli valuation --portfolio PORTFOLIO [--format json|table]
 ```
 
 Trailing/forward P/E, P/S, P/B, EV/EBITDA, profit margin, dividend yield, market cap (stocks); fund-level P/E / P/B / P/S, expense ratio, AUM (ETFs). yfinance unit quirks are normalised. Cached 1 day.
+
+### `growth` — Consensus forward revenue/EPS growth
+
+```bash
+python3 -m cli growth NFLX LLY NVDA
+python3 -m cli growth --portfolio live
+```
+
+Consensus revenue and EPS growth for the current (FY0) and next (FY1) fiscal year, long-term growth (LTG), forward P/E, PEG (fwd P/E ÷ LTG, falling back to FY1 EPS growth), profit margin, analyst count, and the S&P 500 LTG baseline for comparison. Cached 1 day. ETFs carry no consensus estimates — run `growth` on their top holdings instead.
 
 ### `analysts` — Analyst consensus and price targets
 
@@ -349,8 +393,6 @@ portfolio-intel/
 ├── requirements.txt
 ├── .env.example               # Credential template (copy to .env)
 ├── data/
-│   └── cache.db               # SQLite: price history + ETF holdings (gitignored)
-├── data/
 │   ├── cache.db               # SQLite: prices + ETF holdings + JSON caches (gitignored)
 │   ├── seed_holdings.json     # Static top-10 holdings fallback (shipped)
 │   └── portfolios.json        # Your personal saved portfolios (gitignored)
@@ -360,11 +402,14 @@ portfolio-intel/
 │   ├── analytics.py           # Sharpe, Sortino, beta, correlation, drawdown, trailing returns
 │   ├── backtester.py          # Historical portfolio comparison engine
 │   ├── performance.py         # Money-weighted (XIRR) realized return vs index benchmarks
+│   ├── realized.py            # Realized gains/income/margin cost for a tax year (FIFO + option ledger)
 │   ├── screener.py            # screen() + compare() + compare_multi()
 │   ├── holdings.py            # ETF holdings decomposition, overlap analysis, theme attribution
 │   ├── optimizer.py           # SLSQP optimizer, 8 objectives, multi-start
 │   ├── exposure.py            # Delta-adjusted exposure, Black-Scholes Greeks
+│   ├── realestate.py          # Zillow/FRED fetchers, amortization, leveraged property tax model
 │   ├── valuation.py           # Valuation multiples (stocks + fund-level)
+│   ├── growth.py              # Consensus forward revenue/EPS growth, PEG
 │   ├── analysts.py            # Analyst consensus and price targets
 │   ├── technicals.py          # SMA/RSI/52w range/support-resistance from price cache
 │   ├── macro.py               # VIX, yield curve, WTI, Gold, risk-free rate (^IRX)
@@ -379,7 +424,7 @@ portfolio-intel/
 ├── cli/
 │   ├── main.py                # Click group, command registration
 │   ├── formatters.py          # JSON envelope + table formatters
-│   └── commands/              # One file per CLI command (22 commands)
+│   └── commands/              # One file per CLI command (27 commands)
 ├── tests/                     # unittest suite (pure math, no network)
 ├── app/                       # FastAPI web dashboard
 │   ├── main.py

@@ -131,7 +131,12 @@ def resolve_portfolio(name: str) -> "list[dict]":
 # "live" = current Robinhood holdings (resolved at request time); the named
 # alternatives are advisory targets maintained in data/portfolios.json.
 DEFAULT_PORTFOLIO: str = "live"
-PORTFOLIO_DISPLAY_ORDER: list[str] = ["live", "checkup_target", "thesis_core"]
+# Dashboard picker order: live first, then user portfolios in the order they
+# appear in data/portfolios.json — personal portfolio names stay out of
+# tracked code (this is a public repo).
+PORTFOLIO_DISPLAY_ORDER: list[str] = ["live"] + [
+    p for p in PORTFOLIOS if p not in ("core_satellite", "thematic")
+]
 
 # Thesis anchors — positions held on conviction, never flagged EXIT by the trim
 # engine regardless of trailing Sharpe (a diversifier/hedge naturally drags Sharpe
