@@ -58,3 +58,6 @@ Thumbs.db
 
 # Local Claude Code workspace (skills, settings) — not part of the project
 .claude/
+
+# Zillow research CSV cache — regeneratable
+data/zillow_*.csv

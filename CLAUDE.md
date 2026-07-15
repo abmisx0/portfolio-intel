@@ -132,6 +132,33 @@ Three sections: trim signals (with ΔSharpe if removed + tax status), watchlist 
 
 Signal semantics: `EXIT`/`TRIM` = removal improves portfolio Sharpe (ΔSharpe > 0.05 / > 0.01); `WEAK` = poor standalone metrics but removal would NOT help; `REDUCE` = position > 25% of book. The simulation inner-joins members on common dates, so positions with less than ~the full lookback of history are **excluded** (reported in the header) rather than silently truncating the window for everyone; the header always prints the **effective window** (start → end, trading days) actually simulated.
 
+### `property` — Real-estate purchase vs index, after tax
+```bash
+# Backtest: what a 2016 Austin purchase actually did vs the same cash in VOO
+python3 -m cli property --price 450000 --rent 2600 --metro "Austin, TX" --backtest-start 2016-07 --hold 7
+# Forecast: assumption-driven, with breakeven appreciation
+python3 -m cli property --price 450000 --rent 2600 --metro "Austin, TX" --hold 10 --niit
+# Owner-occupied variant (imputed rent, §121 exclusion)
+python3 -m cli property --price 700000 --rent 3200 --primary --hold 10
+```
+Simulates a leveraged property month-by-month (amortization, vacancy,
+maintenance/capex/insurance/tax, management, HOA) with a 2026 federal tax
+layer (27.5y depreciation, passive-loss carryforward released at sale,
+recapture at min(bracket, 25%), LTCG, optional `--qbi`/`--niit`,
+`--hold-forever` for 1031-until-step-up, `--primary` for §121 + imputed rent)
+and compares **equal out-of-pocket dollars** into a benchmark, both sides
+after tax. Data: Zillow metro ZHVI/ZORI (free CSVs, weekly-cached in `data/`),
+FRED keyless CSVs (Case-Shiller, PMMS mortgage rates). **Backtest** mode uses
+actual metro price/rent paths and actual benchmark prices; **forecast** mode
+uses metro-CAGR defaults (overridable) and an assumed benchmark return, and
+prints the **breakeven appreciation** — the annual appreciation above which
+the property beats the index. Risk block de-smooths index vol (×1.6 Geltner
+factor + 10% idiosyncratic) and levers by the down payment — index vol badly
+understates single-house risk. Defaults follow 2026 norms (0.9% property tax,
+0.6% insurance, 1%+0.5% maintenance+capex, 5% vacancy, 3%/7% closing costs,
+~5.5% post-NAR commissions inside the 7%). Read the caveats: federal-only,
+no state tax/SALT/AMT, no cost-seg bonus depreciation, not tax advice.
+
 ### `analysts` — Analyst consensus and price targets
 ```bash
 python3 -m cli analysts MU AVGO TSM

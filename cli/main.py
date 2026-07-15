@@ -38,6 +38,7 @@ from cli.commands.news import news_cmd
 from cli.commands.earnings import earnings_cmd
 from cli.commands.growth import growth_cmd
 from cli.commands.realized import realized_cmd
+from cli.commands.property import property_cmd
 
 
 @click.group()
@@ -70,6 +71,7 @@ cli.add_command(news_cmd, name="news")
 cli.add_command(earnings_cmd, name="earnings")
 cli.add_command(growth_cmd, name="growth")
 cli.add_command(realized_cmd, name="realized")
+cli.add_command(property_cmd, name="property")
 
 
 @cli.command()
